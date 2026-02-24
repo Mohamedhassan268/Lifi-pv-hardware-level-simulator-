@@ -247,6 +247,36 @@ def cmd_presets(args):
             print(f"  {name:20s}  {cfg.paper_reference or '(no reference)'}")
 
 
+def cmd_validate(args):
+    """Run paper validation & generate figures."""
+    from papers import PAPERS, run_paper, run_all_papers, list_papers
+
+    if args.list:
+        _header("AVAILABLE PAPER VALIDATIONS")
+        for name, label, ref in list_papers():
+            print(f"  {name:20s}  {label}")
+            print(f"  {' '*20}  {ref}")
+        return
+
+    if args.paper:
+        _header(f"VALIDATE: {args.paper}")
+        out = args.output or os.path.join('workspace', f'validation_{args.paper}')
+        passed = run_paper(args.paper, out)
+        print(f"\n  Result: {'PASS' if passed else 'FAIL'}")
+    else:
+        _header("VALIDATE ALL PAPERS")
+        base = args.output or os.path.join('workspace', 'validation')
+        results = run_all_papers(base)
+        print("\n" + "=" * 50)
+        print("  SUMMARY")
+        print("=" * 50)
+        for name, passed in results.items():
+            label = PAPERS[name]['label']
+            print(f"  {'PASS' if passed else 'FAIL'}  {label}")
+        total = sum(results.values())
+        print(f"\n  {total}/{len(results)} papers passed")
+
+
 def cmd_ltspice(args):
     """Check LTspice installation."""
     from cosim.ltspice_runner import LTSpiceRunner, find_ltspice
@@ -331,6 +361,12 @@ def build_parser():
     # ltspice
     sub.add_parser('ltspice', help='Check LTspice installation')
 
+    # validate
+    va = sub.add_parser('validate', help='Run paper validation & generate figures')
+    va.add_argument('paper', nargs='?', help='Paper key (e.g. kadirvelu2021)')
+    va.add_argument('--list', action='store_true', help='List available papers')
+    va.add_argument('-o', '--output', help='Output directory')
+
     return p
 
 
@@ -352,6 +388,7 @@ def main():
         'pipeline':   cmd_pipeline,
         'presets':    cmd_presets,
         'ltspice':    cmd_ltspice,
+        'validate':   cmd_validate,
     }
 
     if args.command in commands:
