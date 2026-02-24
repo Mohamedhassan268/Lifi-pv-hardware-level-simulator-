@@ -1,0 +1,69 @@
+{
+  "preset_name": "gonzalez2024",
+  "paper_reference": "González-Uriarte et al., IEEE LATINCOM 2024 - Design and Implementation of a Low-Cost VLC Photovoltaic Panel-Based Receiver",
+
+  "simulation_engine": "spice",
+  "modulation": "OOK_Manchester",
+
+  "led_part": "White LED 3W",
+  "driver_part": "Generic",
+  "bias_current_A": 1.0,
+  "modulation_depth": 0.9,
+  "led_radiated_power_mW": 3000.0,
+  "led_half_angle_deg": 30.0,
+  "led_driver_re": 5.0,
+  "led_gled": 0.50,
+  "lens_transmittance": 1.0,
+
+  "distance_m": 0.60,
+  "tx_angle_deg": 0.0,
+  "rx_tilt_deg": 0.0,
+
+  "pv_part": "Poly-Si Solar Panel 66cm2",
+  "sc_area_cm2": 66.0,
+  "sc_responsivity": 0.40,
+  "sc_cj_nF": 14.5,
+  "sc_rsh_kOhm": 200.0,
+  "sc_iph_uA": 0.0,
+  "sc_vmpp_mV": 0.0,
+  "sc_impp_uA": 0.0,
+  "sc_pmpp_uW": 0.0,
+
+  "r_sense_ohm": 220.0,
+  "ina_part": "N/A",
+  "ina_gain_dB": 0.0,
+  "ina_gbw_kHz": 0.0,
+  "comparator_part": "TLV7011",
+
+  "amp_gain_linear": 165.0,
+  "notch_freq_hz": 100.0,
+  "notch_Q": 30.0,
+
+  "bpf_stages": 0,
+  "bpf_f_low_Hz": 50.0,
+  "bpf_f_high_Hz": 50000.0,
+  "bpf_rhp": 0.0,
+  "bpf_chp_pF": 0.0,
+  "bpf_rlp": 0.0,
+  "bpf_clf_nF": 0.0,
+
+  "dcdc_fsw_kHz": 0.0,
+  "dcdc_l_uH": 0.0,
+  "dcdc_cp_uF": 0.0,
+  "dcdc_cl_uF": 0.0,
+  "r_load_ohm": 220.0,
+
+  "t_stop_s": 0.01,
+  "data_rate_bps": 4800.0,
+  "prbs_order": 7,
+  "n_bits": 48,
+
+  "temperature_K": 300.0,
+
+  "noise_enable": false,
+  "ina_noise_nV_rtHz": 15.0,
+  "shot_noise_enable": true,
+  "thermal_noise_enable": true,
+
+  "target_ber": 0.0
+}

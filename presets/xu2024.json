@@ -1,0 +1,70 @@
+{
+  "preset_name": "xu2024",
+  "paper_reference": "Xu et al., EWSN 2024 - Sunlight-Duo: Exploiting Sunlight for Simultaneous Energy Harvesting & Communication",
+
+  "simulation_engine": "python",
+  "modulation": "BFSK",
+
+  "led_part": "Sunlight (passive)",
+  "driver_part": "LC Shutter",
+  "bias_current_A": 0.0,
+  "modulation_depth": 1.0,
+  "led_radiated_power_mW": 600.0,
+  "led_half_angle_deg": 90.0,
+  "led_driver_re": 0.0,
+  "led_gled": 1.0,
+  "lens_transmittance": 0.35,
+
+  "distance_m": 5.0,
+  "tx_angle_deg": 0.0,
+  "rx_tilt_deg": 0.0,
+
+  "pv_part": "GaAs 16-cell Array",
+  "sc_area_cm2": 16.0,
+  "sc_responsivity": 0.457,
+  "sc_cj_nF": 50.0,
+  "sc_rsh_kOhm": 100.0,
+  "sc_iph_uA": 0.0,
+  "sc_vmpp_mV": 0.0,
+  "sc_impp_uA": 0.0,
+  "sc_pmpp_uW": 0.0,
+
+  "r_sense_ohm": 100.0,
+  "ina_part": "N/A",
+  "ina_gain_dB": 0.0,
+  "ina_gbw_kHz": 0.0,
+  "comparator_part": "N/A",
+
+  "bpf_stages": 0,
+  "bpf_f_low_Hz": 0.0,
+  "bpf_f_high_Hz": 5000.0,
+  "bpf_rhp": 0.0,
+  "bpf_chp_pF": 0.0,
+  "bpf_rlp": 0.0,
+  "bpf_clf_nF": 0.0,
+
+  "dcdc_fsw_kHz": 0.0,
+  "dcdc_l_uH": 0.0,
+  "dcdc_cp_uF": 0.0,
+  "dcdc_cl_uF": 0.0,
+  "r_load_ohm": 1000.0,
+
+  "t_stop_s": 0.05,
+  "data_rate_bps": 400.0,
+  "prbs_order": 7,
+  "n_bits": 20,
+
+  "bfsk_f0_hz": 1600.0,
+  "bfsk_f1_hz": 2000.0,
+
+  "n_cells_series": 2,
+  "n_cells_parallel": 8,
+  "temperature_K": 300.0,
+
+  "noise_enable": true,
+  "ina_noise_nV_rtHz": 0.0,
+  "shot_noise_enable": true,
+  "thermal_noise_enable": true,
+
+  "target_ber": 0.10
+}

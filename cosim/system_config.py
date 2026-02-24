@@ -79,9 +79,10 @@ class SystemConfig:
     # -- Simulation Controls ---------------------------------------------------
     t_stop_s: float = 1e-3
     data_rate_bps: float = 5000.0
-    modulation: str = 'OOK'
+    modulation: str = 'OOK'             # OOK, OOK_Manchester, OFDM, BFSK, PWM_ASK
     prbs_order: int = 7
     n_bits: int = 100
+    simulation_engine: str = 'spice'    # 'spice' or 'python'
 
     # -- Noise Configuration ---------------------------------------------------
     noise_enable: bool = False
@@ -89,10 +90,41 @@ class SystemConfig:
     shot_noise_enable: bool = True         # Shot noise on photocurrent
     thermal_noise_enable: bool = True      # Thermal noise on Rsense
 
+    # -- Multi-Paper Extensions ------------------------------------------------
+    # OFDM parameters (Sarwar 2017, Oliveira 2024)
+    ofdm_nfft: int = 256
+    ofdm_qam_order: int = 16
+    ofdm_n_subcarriers: int = 80
+    ofdm_cp_len: int = 32
+    ofdm_sample_rate_hz: float = 15e6
+
+    # BFSK parameters (Xu 2024)
+    bfsk_f0_hz: float = 1600.0
+    bfsk_f1_hz: float = 2000.0
+
+    # PWM-ASK parameters (Correa 2025)
+    pwm_freq_hz: float = 10.0
+    carrier_freq_hz: float = 10000.0
+
+    # Environment (Correa 2025 greenhouse)
+    humidity_rh: Optional[float] = None   # relative humidity 0-1 for Beer-Lambert
+    temperature_K: float = 300.0
+
+    # Multi-cell / reconfigurable (Xu 2024)
+    n_cells_series: int = 1
+    n_cells_parallel: int = 1
+
+    # Receiver chain extensions (González 2024)
+    amp_gain_linear: float = 1.0          # voltage amplifier gain after INA
+    notch_freq_hz: Optional[float] = None # notch filter for mains rejection
+    notch_Q: float = 30.0
+
     # -- Validation Targets (optional) -----------------------------------------
     target_harvested_power_uW: Optional[float] = None
     target_ber: Optional[float] = None
     target_noise_rms_mV: Optional[float] = None
+    target_data_rate_mbps: Optional[float] = None
+    target_fec_threshold: Optional[float] = None
 
     # -- Metadata --------------------------------------------------------------
     preset_name: str = ''

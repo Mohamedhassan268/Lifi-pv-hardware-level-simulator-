@@ -2,11 +2,11 @@
 """
 Tab 5: Results & Analysis
 
-Sub-tabs: Waveforms, Eye Diagram, BER/SNR, Energy Harvest
-Parses .raw files from LTspice and displays real simulation data.
+Sub-tabs: Waveforms, Eye Diagram, BER/SNR, Energy Harvest, Validation
+Parses .raw files from LTspice or Python engine results.
 """
 
-import sys, os
+import sys, os, json, glob as glob_mod
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
@@ -29,6 +29,7 @@ class ResultsTab(QWidget):
         self._config = config
         self._results = {}
         self._parser = None
+        self._python_result = None  # Dict from Python engine
         self._build_ui()
 
     def update_config(self, config):
@@ -125,6 +126,36 @@ class ResultsTab(QWidget):
         exp_layout.addWidget(self._exp_canvas)
         self._subtabs.addTab(self._explorer_tab, 'Signal Explorer')
 
+        # --- Validation Comparison sub-tab ---
+        self._validation_tab = QWidget()
+        val_layout = QVBoxLayout(self._validation_tab)
+
+        val_ctrl = QHBoxLayout()
+        val_ctrl.addWidget(QLabel('Paper Preset:'))
+        self._val_preset_combo = QComboBox()
+        self._val_preset_combo.addItem('(Current Config)')
+        self._load_preset_list()
+        val_ctrl.addWidget(self._val_preset_combo)
+        btn_validate = QPushButton('Compare with Targets')
+        btn_validate.clicked.connect(self._run_validation_comparison)
+        val_ctrl.addWidget(btn_validate)
+        val_ctrl.addStretch()
+        val_layout.addLayout(val_ctrl)
+
+        self._val_table = QTableWidget()
+        self._val_table.setColumnCount(5)
+        self._val_table.setHorizontalHeaderLabels(
+            ['Parameter', 'Simulated', 'Target', 'Error %', 'Status'])
+        self._val_table.horizontalHeader().setStretchLastSection(True)
+        self._val_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        val_layout.addWidget(self._val_table)
+
+        self._val_summary = QLabel('')
+        self._val_summary.setStyleSheet('font-size: 12px; padding: 5px;')
+        val_layout.addWidget(self._val_summary)
+
+        self._subtabs.addTab(self._validation_tab, 'Validation')
+
         main.addWidget(self._subtabs)
 
         # Export row
@@ -145,19 +176,30 @@ class ResultsTab(QWidget):
         """Called when simulation completes with new results."""
         self._results = results
         self._wf_placeholder.hide()
+        self._python_result = None
+        self._parser = None
 
-        # Load .raw file if available
         rx = results.get('RX')
         if rx and hasattr(rx, 'outputs'):
-            raw_path = rx.outputs.get('raw_file')
-            if raw_path:
-                try:
-                    self._parser = LTSpiceRawParser(raw_path)
-                    # Populate signal explorer dropdown
-                    self._exp_signal_combo.clear()
-                    self._exp_signal_combo.addItems(self._parser.list_traces())
-                except Exception:
-                    self._parser = None
+            # Check for Python engine result first
+            py_res = rx.outputs.get('python_result')
+            if py_res and isinstance(py_res, dict):
+                self._python_result = py_res
+                # Populate signal explorer with Python signals
+                self._exp_signal_combo.clear()
+                self._exp_signal_combo.addItems(
+                    ['P_tx', 'P_rx', 'I_ph', 'V_rx'])
+            else:
+                # Load .raw file for SPICE engine
+                raw_path = rx.outputs.get('raw_file')
+                if raw_path:
+                    try:
+                        self._parser = LTSpiceRawParser(raw_path)
+                        self._exp_signal_combo.clear()
+                        self._exp_signal_combo.addItems(
+                            self._parser.list_traces())
+                    except Exception:
+                        self._parser = None
 
         # Update BER info from pipeline
         if rx and hasattr(rx, 'outputs'):
@@ -165,10 +207,22 @@ class ResultsTab(QWidget):
             n_err = rx.outputs.get('ber_n_errors')
             n_bits = rx.outputs.get('ber_n_bits')
             snr = rx.outputs.get('bpf_snr_dB')
+
+            # Also check Python result
+            if ber is None and self._python_result:
+                ber = self._python_result.get('ber')
+                n_err = self._python_result.get('n_errors')
+                n_bits = self._python_result.get('n_bits_tested')
+                snr = self._python_result.get('snr_est_dB')
+
             if ber is not None:
-                info = f'Simulated BER: {ber:.4e} ({n_err}/{n_bits} errors)'
+                info = f'Simulated BER: {ber:.4e}'
+                if n_err is not None and n_bits is not None:
+                    info += f' ({n_err}/{n_bits} errors)'
                 if snr is not None and not (snr != snr):  # not NaN
-                    info += f'  |  BPF SNR: {snr:.1f} dB'
+                    info += f'  |  SNR: {snr:.1f} dB'
+                if self._python_result:
+                    info += f'  |  Engine: Python ({self._python_result.get("modulation", "")})'
                 self._ber_info.setText(info)
 
         self._update_waveforms()
@@ -185,7 +239,11 @@ class ResultsTab(QWidget):
         # [2] INA Output V(ina_out)     [3] BPF Output V(bpf_out)
         # [4] Comparator V(dout)        [5] DC-DC V(dcdc_out)
 
-        if self._parser is not None:
+        if self._python_result is not None:
+            # Python engine: use in-memory arrays
+            self._plot_python_waveforms(axes)
+        elif self._parser is not None:
+            # SPICE engine: parse .raw file
             time = self._parser.get_time()
             t_ms = time * 1e3
 
@@ -252,13 +310,146 @@ class ResultsTab(QWidget):
         self._wf_canvas.fig.tight_layout()
         self._wf_canvas.draw()
 
-    def _update_harvest(self):
-        """Update energy harvesting metrics from simulation data."""
-        if self._parser is None:
+    def _plot_python_waveforms(self, axes):
+        """Plot waveforms from Python engine result arrays."""
+        pr = self._python_result
+        t = pr.get('time')
+        if t is None:
             return
 
+        t_ms = t * 1e3
+        # Limit points for performance
+        step = max(1, len(t) // 5000)
+
+        # [0] TX: P_tx
+        P_tx = pr.get('P_tx')
+        if P_tx is not None:
+            axes[0].plot(t_ms[::step], P_tx[::step] * 1e3, 'b-', linewidth=0.5)
+            axes[0].set_title('TX: P_tx', fontsize=9)
+            axes[0].set_ylabel('mW', fontsize=7)
+            axes[0].grid(True, alpha=0.3)
+            axes[0].tick_params(labelsize=7)
+
+        # [1] Channel: P_rx
+        P_rx = pr.get('P_rx')
+        if P_rx is not None:
+            axes[1].plot(t_ms[::step], P_rx[::step] * 1e6, 'orange', linewidth=0.5)
+            axes[1].set_title('Channel: P_rx', fontsize=9)
+            axes[1].set_ylabel('uW', fontsize=7)
+            axes[1].grid(True, alpha=0.3)
+            axes[1].tick_params(labelsize=7)
+
+        # [2] Photocurrent I_ph
+        I_ph = pr.get('I_ph')
+        if I_ph is not None:
+            axes[2].plot(t_ms[::step], I_ph[::step] * 1e6, 'g-', linewidth=0.5)
+            axes[2].set_title('Photocurrent: I_ph', fontsize=9)
+            axes[2].set_ylabel('uA', fontsize=7)
+            axes[2].grid(True, alpha=0.3)
+            axes[2].tick_params(labelsize=7)
+
+        # [3] Receiver voltage V_rx
+        V_rx = pr.get('V_rx')
+        if V_rx is not None:
+            axes[3].plot(t_ms[::step], V_rx[::step] * 1e3, 'purple', linewidth=0.5)
+            axes[3].set_title('Receiver: V_rx (after TIA+filters)', fontsize=9)
+            axes[3].set_ylabel('mV', fontsize=7)
+            axes[3].grid(True, alpha=0.3)
+            axes[3].tick_params(labelsize=7)
+
+        # [4] BER/SNR summary text
+        ber = pr.get('ber', 'N/A')
+        snr = pr.get('snr_est_dB', 0)
+        mod = pr.get('modulation', '?')
+        p_rx_uw = pr.get('P_rx_avg_uW', 0)
+        axes[4].text(0.5, 0.5,
+                     f"Engine: Python\n"
+                     f"Modulation: {mod}\n"
+                     f"BER: {ber:.4e}\n"
+                     f"SNR: {snr:.1f} dB\n"
+                     f"P_rx(avg): {p_rx_uw:.3f} uW\n"
+                     f"Channel gain: {pr.get('channel_gain', 0):.3e}",
+                     ha='center', va='center',
+                     transform=axes[4].transAxes, fontsize=10,
+                     family='monospace',
+                     bbox=dict(boxstyle='round', facecolor='#e8f5e9', alpha=0.8))
+        axes[4].set_title('Results Summary', fontsize=9)
+        axes[4].set_xticks([])
+        axes[4].set_yticks([])
+
+        # [5] Bit comparison (first 50 bits)
+        bits_tx = pr.get('bits_tx')
+        bits_rx = pr.get('bits_rx')
+        if bits_tx is not None and bits_rx is not None:
+            n_show = min(50, len(bits_tx), len(bits_rx))
+            errors = bits_tx[:n_show] != bits_rx[:n_show]
+            x = np.arange(n_show)
+            axes[5].bar(x[~errors], bits_tx[:n_show][~errors], color='green',
+                        alpha=0.6, width=0.8, label='Correct')
+            axes[5].bar(x[errors], bits_tx[:n_show][errors], color='red',
+                        alpha=0.8, width=0.8, label='Error')
+            axes[5].set_title(f'Bit Comparison (first {n_show})', fontsize=9)
+            axes[5].set_ylabel('Bit', fontsize=7)
+            axes[5].set_xlabel('Bit index', fontsize=7)
+            axes[5].legend(fontsize=7)
+            axes[5].tick_params(labelsize=7)
+        else:
+            axes[5].text(0.5, 0.5, 'No bit data', ha='center', va='center',
+                         transform=axes[5].transAxes)
+
+        for ax in axes[4:]:
+            if ax == axes[4]:
+                continue
+            ax.set_xlabel('', fontsize=7)
+
+    def _update_harvest(self):
+        """Update energy harvesting metrics from simulation data."""
         ax = self._harvest_canvas.ax
         ax.clear()
+
+        if self._python_result is not None:
+            # Python engine: estimate harvest from P_rx
+            try:
+                pr = self._python_result
+                t = pr.get('time')
+                P_rx = pr.get('P_rx')
+                if t is not None and P_rx is not None:
+                    t_ms = t * 1e3
+                    step = max(1, len(t) // 5000)
+                    ax.plot(t_ms[::step], P_rx[::step] * 1e6, 'b-',
+                            linewidth=0.5, label='P_rx')
+                    ax.set_xlabel('Time (ms)')
+                    ax.set_ylabel('Power (uW)')
+                    ax.set_title('Received Optical Power')
+                    ax.legend(fontsize=8)
+                    ax.grid(True, alpha=0.3)
+
+                    P_avg = np.mean(P_rx)
+                    R_load = self._config.r_load_ohm if self._config else 50
+                    R = self._config.sc_responsivity if self._config else 0.4
+                    I_ph_avg = R * P_avg
+                    V_ph = I_ph_avg * R_load
+
+                    items = [
+                        ('P_rx (avg)', f'{P_avg*1e6:.3f} uW'),
+                        ('I_ph (avg)', f'{I_ph_avg*1e6:.3f} uA'),
+                        ('V_ph (avg)', f'{V_ph*1e3:.3f} mV'),
+                        ('Channel Gain', f'{pr.get("channel_gain", 0):.3e}'),
+                        ('BER', f'{pr.get("ber", 0):.4e}'),
+                        ('SNR', f'{pr.get("snr_est_dB", 0):.1f} dB'),
+                    ]
+                    self._harvest_table.setRowCount(len(items))
+                    for i, (k, v) in enumerate(items):
+                        self._harvest_table.setItem(i, 0, QTableWidgetItem(k))
+                        self._harvest_table.setItem(i, 1, QTableWidgetItem(v))
+            except Exception as e:
+                ax.text(0.5, 0.5, f'Error: {e}',
+                        ha='center', va='center', transform=ax.transAxes)
+            self._harvest_canvas.draw()
+            return
+
+        if self._parser is None:
+            return
 
         try:
             time = self._parser.get_time()
@@ -280,9 +471,7 @@ class ResultsTab(QWidget):
             v_ss = v_dcdc[n_half:]
             v_sc_ss = v_sc[n_half:]
 
-            from cosim.system_config import SystemConfig
-            cfg = SystemConfig.from_preset('kadirvelu2021')
-            R_load = cfg.r_load_ohm
+            R_load = self._config.r_load_ohm if self._config else 180000.0
 
             V_avg = np.mean(v_ss)
             V_rms = np.sqrt(np.mean(v_ss**2))
@@ -314,7 +503,7 @@ class ResultsTab(QWidget):
         ax = self._eye_canvas.ax
         ax.clear()
 
-        if self._parser is None:
+        if self._parser is None and self._python_result is None:
             ax.text(0.5, 0.5, 'No simulation data',
                     ha='center', va='center', transform=ax.transAxes)
             self._eye_canvas.draw()
@@ -325,8 +514,22 @@ class ResultsTab(QWidget):
         try:
             from simulation.analysis import eye_diagram_data
 
-            time = self._parser.get_time()
-            waveform = self._parser.get_trace(signal_name)
+            if self._python_result is not None:
+                time = self._python_result.get('time')
+                sig_map = {
+                    'P_tx': 'P_tx', 'P_rx': 'P_rx',
+                    'I_ph': 'I_ph', 'V_rx': 'V_rx',
+                }
+                key = sig_map.get(signal_name, 'V_rx')
+                waveform = self._python_result.get(key)
+                if time is None or waveform is None:
+                    ax.text(0.5, 0.5, 'Signal not available',
+                            ha='center', va='center', transform=ax.transAxes)
+                    self._eye_canvas.draw()
+                    return
+            else:
+                time = self._parser.get_time()
+                waveform = self._parser.get_trace(signal_name)
 
             data_rate = 5000.0
             if self._config is not None:
@@ -354,28 +557,56 @@ class ResultsTab(QWidget):
         self._eye_canvas.draw()
 
     def _plot_theoretical_ber(self):
-        """Plot theoretical BER curve for OOK."""
+        """Plot theoretical BER curves for multiple modulation types."""
         ax = self._ber_canvas.ax
         ax.clear()
 
         try:
-            from simulation.analysis import theoretical_ber_ook
-            snr_range = np.linspace(0, 24, 200)
-            ber = [theoretical_ber_ook(s) for s in snr_range]
+            from cosim.python_engine import (
+                predict_ber_ook_db, predict_ber_bfsk, predict_ber_mqam)
 
-            ax.semilogy(snr_range, ber, 'b-', linewidth=2)
+            snr_db = np.linspace(0, 30, 200)
+            snr_lin = 10 ** (snr_db / 10)
+
+            # OOK
+            ber_ook = predict_ber_ook_db(snr_db)
+            ax.semilogy(snr_db, ber_ook, 'b-', linewidth=2, label='OOK')
+
+            # BFSK
+            ber_bfsk = predict_ber_bfsk(snr_lin)
+            ax.semilogy(snr_db, ber_bfsk, 'g--', linewidth=2, label='BFSK')
+
+            # 16-QAM
+            ber_16qam = [predict_ber_mqam(s, 16) for s in snr_lin]
+            ax.semilogy(snr_db, ber_16qam, 'r-.', linewidth=2, label='16-QAM')
+
+            # 64-QAM
+            ber_64qam = [predict_ber_mqam(s, 64) for s in snr_lin]
+            ax.semilogy(snr_db, ber_64qam, 'm:', linewidth=2, label='64-QAM')
+
             ax.set_xlabel('SNR (dB)')
             ax.set_ylabel('BER')
-            ax.set_title('Theoretical BER for OOK')
+            ax.set_title('Theoretical BER Curves')
             ax.set_ylim([1e-10, 1])
             ax.grid(True, which='both', alpha=0.3)
+            ax.legend(fontsize=8)
 
-            for target, label in [(1e-3, 'BER=1e-3'), (1e-6, 'BER=1e-6')]:
-                ax.axhline(target, color='r', linestyle='--', alpha=0.5)
-                ax.text(1, target * 1.5, label, fontsize=8, color='r')
+            # Mark simulated point if available
+            if self._python_result:
+                sim_snr = self._python_result.get('snr_est_dB')
+                sim_ber = self._python_result.get('ber')
+                mod = self._python_result.get('modulation', '')
+                if sim_snr is not None and sim_ber is not None and sim_ber > 0:
+                    ax.plot(sim_snr, sim_ber, 'k*', markersize=15,
+                            label=f'Simulated ({mod})', zorder=5)
+                    ax.legend(fontsize=8)
 
-        except ImportError:
-            ax.text(0.5, 0.5, 'scipy not available',
+            for target, label in [(1e-3, 'FEC limit'), (1e-6, 'Error-free')]:
+                ax.axhline(target, color='gray', linestyle=':', alpha=0.5)
+                ax.text(1, target * 1.5, label, fontsize=7, color='gray')
+
+        except Exception as e:
+            ax.text(0.5, 0.5, f'Error: {e}',
                     ha='center', va='center', transform=ax.transAxes)
 
         self._ber_canvas.draw()
@@ -453,30 +684,44 @@ class ResultsTab(QWidget):
         self._ber_canvas.draw()
 
     def _plot_explorer_signal(self):
-        """Plot arbitrary signal from .raw file."""
+        """Plot arbitrary signal from .raw file or Python result."""
         ax = self._exp_canvas.ax
         ax.clear()
 
-        if self._parser is None:
-            ax.text(0.5, 0.5, 'No simulation data',
-                    ha='center', va='center', transform=ax.transAxes)
-            self._exp_canvas.draw()
-            return
-
         signal_name = self._exp_signal_combo.currentText()
 
-        try:
-            time = self._parser.get_time()
-            trace = self._parser.get_trace(signal_name)
-
-            ax.plot(time * 1e3, trace, 'b-', linewidth=0.5)
-            ax.set_xlabel('Time (ms)')
-            ax.set_ylabel(signal_name)
-            ax.set_title(f'Signal: {signal_name}')
-            ax.grid(True, alpha=0.3)
-
-        except Exception as e:
-            ax.text(0.5, 0.5, f'Error: {e}',
+        if self._python_result is not None:
+            try:
+                t = self._python_result.get('time')
+                trace = self._python_result.get(signal_name)
+                if t is None or trace is None:
+                    ax.text(0.5, 0.5, f'{signal_name} not available',
+                            ha='center', va='center', transform=ax.transAxes)
+                    self._exp_canvas.draw()
+                    return
+                step = max(1, len(t) // 5000)
+                ax.plot(t[::step] * 1e3, trace[::step], 'b-', linewidth=0.5)
+                ax.set_xlabel('Time (ms)')
+                ax.set_ylabel(signal_name)
+                ax.set_title(f'Signal: {signal_name}')
+                ax.grid(True, alpha=0.3)
+            except Exception as e:
+                ax.text(0.5, 0.5, f'Error: {e}',
+                        ha='center', va='center', transform=ax.transAxes)
+        elif self._parser is not None:
+            try:
+                time = self._parser.get_time()
+                trace = self._parser.get_trace(signal_name)
+                ax.plot(time * 1e3, trace, 'b-', linewidth=0.5)
+                ax.set_xlabel('Time (ms)')
+                ax.set_ylabel(signal_name)
+                ax.set_title(f'Signal: {signal_name}')
+                ax.grid(True, alpha=0.3)
+            except Exception as e:
+                ax.text(0.5, 0.5, f'Error: {e}',
+                        ha='center', va='center', transform=ax.transAxes)
+        else:
+            ax.text(0.5, 0.5, 'No simulation data',
                     ha='center', va='center', transform=ax.transAxes)
 
         self._exp_canvas.draw()
@@ -489,6 +734,7 @@ class ResultsTab(QWidget):
             2: self._ber_canvas,
             3: self._harvest_canvas,
             4: self._exp_canvas,
+            # Tab 5 (Validation) has no canvas to export
         }
         idx = self._subtabs.currentIndex()
         canvas = canvas_map.get(idx)
@@ -516,6 +762,7 @@ class ResultsTab(QWidget):
 
         if self._config:
             lines.append(f'Preset: {self._config.preset_name or "Custom"}')
+            lines.append(f'Engine: {self._config.simulation_engine}')
             lines.append(f'LED: {self._config.led_part}')
             lines.append(f'PV: {self._config.pv_part}')
             lines.append(f'Distance: {self._config.distance_m * 100:.1f} cm')
@@ -546,5 +793,168 @@ class ResultsTab(QWidget):
                 lines.append(f'  BPF SNR: {rx.outputs.get("bpf_snr_dB", "N/A")} dB')
                 lines.append('')
 
+        # Include Python engine results
+        if self._python_result:
+            lines.append('--- Python Engine Results ---')
+            for k in ('ber', 'n_errors', 'n_bits_tested', 'snr_est_dB',
+                       'modulation', 'channel_gain', 'P_rx_avg_uW', 'I_ph_avg_uA'):
+                v = self._python_result.get(k)
+                if v is not None:
+                    lines.append(f'  {k}: {v}')
+            lines.append('')
+
         with open(path, 'w') as f:
             f.write('\n'.join(lines))
+
+    # -----------------------------------------------------------------
+    # Validation Comparison
+    # -----------------------------------------------------------------
+
+    def _load_preset_list(self):
+        """Populate the validation preset dropdown from presets/ directory."""
+        presets_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'presets')
+        if os.path.isdir(presets_dir):
+            for f in sorted(os.listdir(presets_dir)):
+                if f.endswith('.json'):
+                    name = f.replace('.json', '')
+                    self._val_preset_combo.addItem(name)
+
+    def _run_validation_comparison(self):
+        """Compare simulation results against paper target values."""
+        preset_name = self._val_preset_combo.currentText()
+
+        if preset_name == '(Current Config)':
+            cfg = self._config
+            if cfg is None:
+                self._val_summary.setText('No config loaded.')
+                return
+        else:
+            try:
+                from cosim.system_config import SystemConfig
+                cfg = SystemConfig.from_preset(preset_name)
+            except Exception as e:
+                self._val_summary.setText(f'Error loading preset: {e}')
+                return
+
+        # Build validation targets from the preset
+        targets = self._get_paper_targets(cfg)
+        if not targets:
+            self._val_summary.setText(
+                f'No validation targets defined for {cfg.preset_name or "this config"}.')
+            return
+
+        # Get simulated values
+        simulated = self._get_simulated_values()
+
+        # Populate table
+        rows = []
+        n_pass = 0
+        n_total = 0
+        for param, target_val in targets.items():
+            sim_val = simulated.get(param)
+            if sim_val is None:
+                rows.append((param, 'N/A', f'{target_val}', '--', 'Not simulated'))
+                continue
+
+            n_total += 1
+            if target_val != 0:
+                err_pct = abs(sim_val - target_val) / abs(target_val) * 100
+            else:
+                err_pct = abs(sim_val) * 100
+
+            # Determine pass/fail threshold per parameter type
+            if 'ber' in param.lower():
+                # BER: pass if within order of magnitude or both below target
+                if sim_val <= target_val * 10 or (sim_val < 1e-3 and target_val < 1e-3):
+                    status = 'PASS'
+                    n_pass += 1
+                else:
+                    status = 'FAIL'
+            elif 'data_rate' in param.lower():
+                status = 'PASS' if err_pct < 20 else 'FAIL'
+                if status == 'PASS':
+                    n_pass += 1
+            else:
+                status = 'PASS' if err_pct < 50 else 'FAIL'
+                if status == 'PASS':
+                    n_pass += 1
+
+            rows.append((param, f'{sim_val:.4g}', f'{target_val:.4g}',
+                         f'{err_pct:.1f}%', status))
+
+        self._val_table.setRowCount(len(rows))
+        for i, (param, sim, target, err, status) in enumerate(rows):
+            self._val_table.setItem(i, 0, QTableWidgetItem(param))
+            self._val_table.setItem(i, 1, QTableWidgetItem(sim))
+            self._val_table.setItem(i, 2, QTableWidgetItem(target))
+            self._val_table.setItem(i, 3, QTableWidgetItem(err))
+
+            status_item = QTableWidgetItem(status)
+            if status == 'PASS':
+                status_item.setBackground(
+                    __import__('PyQt6.QtGui', fromlist=['QColor']).QColor('#c8e6c9'))
+            elif status == 'FAIL':
+                status_item.setBackground(
+                    __import__('PyQt6.QtGui', fromlist=['QColor']).QColor('#ffcdd2'))
+            self._val_table.setItem(i, 4, status_item)
+
+        summary = f'Validation: {n_pass}/{n_total} passed'
+        if cfg.preset_name:
+            summary += f' (Preset: {cfg.preset_name})'
+        if cfg.paper_reference:
+            summary += f'\nPaper: {cfg.paper_reference}'
+        self._val_summary.setText(summary)
+
+    def _get_paper_targets(self, cfg):
+        """Extract validation target values from a preset config."""
+        targets = {}
+        if cfg.target_ber is not None and cfg.target_ber > 0:
+            targets['BER'] = cfg.target_ber
+        if cfg.target_data_rate_mbps is not None and cfg.target_data_rate_mbps > 0:
+            targets['Data Rate (Mbps)'] = cfg.target_data_rate_mbps
+        if cfg.target_fec_threshold is not None and cfg.target_fec_threshold > 0:
+            targets['FEC Threshold'] = cfg.target_fec_threshold
+
+        # Distance as a sanity check
+        if cfg.distance_m > 0:
+            targets['Distance (m)'] = cfg.distance_m
+        if cfg.data_rate_bps > 0:
+            targets['Bit Rate (bps)'] = cfg.data_rate_bps
+
+        return targets
+
+    def _get_simulated_values(self):
+        """Extract simulated values from current results."""
+        vals = {}
+
+        # From Python engine
+        if self._python_result:
+            pr = self._python_result
+            if 'ber' in pr:
+                vals['BER'] = pr['ber']
+            if 'snr_est_dB' in pr:
+                vals['SNR (dB)'] = pr['snr_est_dB']
+            if 'P_rx_avg_uW' in pr:
+                vals['P_rx (uW)'] = pr['P_rx_avg_uW']
+
+        # From SPICE pipeline
+        rx = self._results.get('RX')
+        if rx and hasattr(rx, 'outputs'):
+            ber = rx.outputs.get('ber')
+            if ber is not None:
+                vals['BER'] = ber
+            snr = rx.outputs.get('bpf_snr_dB')
+            if snr is not None:
+                vals['SNR (dB)'] = snr
+
+        # Config-derived values
+        if self._config:
+            vals['Distance (m)'] = self._config.distance_m
+            vals['Bit Rate (bps)'] = self._config.data_rate_bps
+            dr_mbps = self._config.data_rate_bps / 1e6
+            if dr_mbps > 0:
+                vals['Data Rate (Mbps)'] = dr_mbps
+
+        return vals

@@ -3,12 +3,13 @@
 Tab 2: Component Library
 
 Left:  filter combo (All/Solar Cells/LEDs/Amplifiers/...) + searchable list
-Right: parameter table + matplotlib plot area
+Right: parameter table + circuit symbol drawing
 """
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QComboBox, QListWidget, QTableWidget, QTableWidgetItem,
@@ -30,6 +31,14 @@ _CATEGORIES = {
     'Comparators':  ['TLV7011'],
     'MOSFETs':      ['BSD235N', 'NTS4409'],
 }
+
+# Map component names to their symbol category
+_COMP_CATEGORY = {}
+for _cat, _names in _CATEGORIES.items():
+    if _cat == 'All':
+        continue
+    for _n in _names:
+        _COMP_CATEGORY[_n] = _cat
 
 
 class ComponentLibraryTab(QWidget):
@@ -58,7 +67,7 @@ class ComponentLibraryTab(QWidget):
         self._comp_list.currentTextChanged.connect(self._on_component_selected)
         left_layout.addWidget(self._comp_list)
 
-        # ---- Right panel: details + plot ----
+        # ---- Right panel: details + symbol ----
         right = QWidget()
         right_layout = QVBoxLayout(right)
 
@@ -112,31 +121,263 @@ class ComponentLibraryTab(QWidget):
             self._param_table.setItem(i, 0, QTableWidgetItem(str(k)))
             self._param_table.setItem(i, 1, QTableWidgetItem(str(v)))
 
-        # Plot spectral response if available
+        # Draw circuit symbol
         self._canvas.clear()
         ax = self._canvas.ax
-        try:
-            if hasattr(comp, 'spectral_response'):
-                wl, resp = comp.spectral_response()
-                ax.plot(wl, resp, 'b-')
-                ax.set_xlabel('Wavelength (nm)')
-                ax.set_ylabel('Responsivity (A/W)')
-                ax.set_title(f'{comp.name} Spectral Response')
-                ax.grid(True, alpha=0.3)
-            elif hasattr(comp, 'emission_spectrum'):
-                wl, power = comp.emission_spectrum()
-                ax.plot(wl, power, 'r-')
-                ax.set_xlabel('Wavelength (nm)')
-                ax.set_ylabel('Relative Power')
-                ax.set_title(f'{comp.name} Emission Spectrum')
-                ax.grid(True, alpha=0.3)
-            else:
-                ax.text(0.5, 0.5, 'No spectral data available',
-                        ha='center', va='center', transform=ax.transAxes,
-                        fontsize=12, color='gray')
-        except Exception:
-            ax.text(0.5, 0.5, 'Plot not available',
-                    ha='center', va='center', transform=ax.transAxes,
-                    fontsize=12, color='gray')
+        ax.set_xlim(-2, 2)
+        ax.set_ylim(-1.5, 1.5)
+        ax.set_aspect('equal')
+        ax.axis('off')
+
+        category = _COMP_CATEGORY.get(name, 'Unknown')
+
+        if category == 'Solar Cells':
+            self._draw_solar_cell(ax, comp.name)
+        elif category == 'Photodiodes':
+            self._draw_photodiode(ax, comp.name)
+        elif category == 'LEDs':
+            self._draw_led(ax, comp.name)
+        elif category == 'Amplifiers':
+            self._draw_amplifier(ax, comp.name)
+        elif category == 'Comparators':
+            self._draw_comparator(ax, comp.name)
+        elif category == 'MOSFETs':
+            self._draw_mosfet(ax, comp.name)
+        else:
+            ax.text(0, 0, comp.name, ha='center', va='center',
+                    fontsize=14, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.5', fc='#E8E8E8', ec='black'))
 
         self._canvas.draw()
+
+    # -----------------------------------------------------------------
+    # Circuit symbol drawing methods
+    # -----------------------------------------------------------------
+
+    def _draw_solar_cell(self, ax, name):
+        """Draw a solar cell / PV cell symbol."""
+        lw = 2.0
+        clr = '#2E5090'
+
+        # Diode triangle
+        tri_x = [-0.4, 0.4, 0.0, -0.4]
+        tri_y = [-0.4, -0.4, 0.4, -0.4]
+        ax.fill(tri_x, tri_y, fc='#D0E0F0', ec=clr, lw=lw)
+
+        # Cathode bar
+        ax.plot([-0.5, 0.5], [0.4, 0.4], color=clr, lw=lw)
+
+        # Leads
+        ax.plot([0, 0], [0.4, 1.0], color=clr, lw=lw)
+        ax.plot([0, 0], [-0.4, -1.0], color=clr, lw=lw)
+
+        # Incoming light arrows (indicating photovoltaic)
+        for dy in [0.15, -0.15]:
+            ax.annotate('', xy=(-0.3, dy), xytext=(-1.1, dy + 0.4),
+                        arrowprops=dict(arrowstyle='->', color='#D4A017',
+                                        lw=1.5))
+
+        # Circle around diode (cell enclosure)
+        circle = plt_Circle((0, 0), 0.7, fill=False, ec=clr, lw=1.2,
+                             linestyle='--')
+        ax.add_patch(circle)
+
+        # Terminal labels
+        ax.text(0.15, 1.05, '+', fontsize=12, fontweight='bold', color=clr)
+        ax.text(0.15, -1.15, '-', fontsize=12, fontweight='bold', color=clr)
+
+        # Component name
+        ax.text(0, -1.4, name, ha='center', va='top', fontsize=11,
+                fontweight='bold', color='#333333')
+
+    def _draw_photodiode(self, ax, name):
+        """Draw a photodiode symbol."""
+        lw = 2.0
+        clr = '#2E5090'
+
+        # Diode triangle (pointing up)
+        tri_x = [-0.4, 0.4, 0.0, -0.4]
+        tri_y = [-0.4, -0.4, 0.4, -0.4]
+        ax.fill(tri_x, tri_y, fc='#D0E0F0', ec=clr, lw=lw)
+
+        # Cathode bar
+        ax.plot([-0.5, 0.5], [0.4, 0.4], color=clr, lw=lw)
+
+        # Leads
+        ax.plot([0, 0], [0.4, 1.0], color=clr, lw=lw)
+        ax.plot([0, 0], [-0.4, -1.0], color=clr, lw=lw)
+
+        # Incoming light arrows
+        for dy in [0.15, -0.15]:
+            ax.annotate('', xy=(-0.3, dy), xytext=(-1.1, dy + 0.4),
+                        arrowprops=dict(arrowstyle='->', color='#D4A017',
+                                        lw=1.5))
+
+        # Terminal labels
+        ax.text(0.15, 1.05, 'K', fontsize=10, fontweight='bold', color=clr)
+        ax.text(0.15, -1.15, 'A', fontsize=10, fontweight='bold', color=clr)
+
+        ax.text(0, -1.4, name, ha='center', va='top', fontsize=11,
+                fontweight='bold', color='#333333')
+
+    def _draw_led(self, ax, name):
+        """Draw an LED symbol."""
+        lw = 2.0
+        clr = '#CC3333'
+
+        # Diode triangle (pointing up)
+        tri_x = [-0.4, 0.4, 0.0, -0.4]
+        tri_y = [-0.4, -0.4, 0.4, -0.4]
+        ax.fill(tri_x, tri_y, fc='#FFD0D0', ec=clr, lw=lw)
+
+        # Cathode bar
+        ax.plot([-0.5, 0.5], [0.4, 0.4], color=clr, lw=lw)
+
+        # Leads
+        ax.plot([0, 0], [0.4, 1.0], color=clr, lw=lw)
+        ax.plot([0, 0], [-0.4, -1.0], color=clr, lw=lw)
+
+        # Outgoing light arrows (emitting)
+        for dy in [0.15, -0.15]:
+            ax.annotate('', xy=(1.1, dy + 0.4), xytext=(0.3, dy),
+                        arrowprops=dict(arrowstyle='->', color='#D4A017',
+                                        lw=1.5))
+
+        # Terminal labels
+        ax.text(0.15, 1.05, 'A', fontsize=10, fontweight='bold', color=clr)
+        ax.text(0.15, -1.15, 'K', fontsize=10, fontweight='bold', color=clr)
+
+        ax.text(0, -1.4, name, ha='center', va='top', fontsize=11,
+                fontweight='bold', color='#333333')
+
+    def _draw_amplifier(self, ax, name):
+        """Draw an op-amp / amplifier triangle symbol."""
+        lw = 2.0
+        clr = '#2E7D32'
+
+        # Triangle body
+        tri_x = [-0.7, -0.7, 0.8, -0.7]
+        tri_y = [-0.7, 0.7, 0.0, -0.7]
+        ax.fill(tri_x, tri_y, fc='#E0F0E0', ec=clr, lw=lw)
+
+        # Input leads
+        ax.plot([-1.4, -0.7], [0.35, 0.35], color=clr, lw=lw)   # +
+        ax.plot([-1.4, -0.7], [-0.35, -0.35], color=clr, lw=lw)  # -
+
+        # Output lead
+        ax.plot([0.8, 1.5], [0.0, 0.0], color=clr, lw=lw)
+
+        # +/- labels inside triangle
+        ax.text(-0.5, 0.35, '+', fontsize=12, fontweight='bold',
+                ha='center', va='center', color=clr)
+        ax.text(-0.5, -0.35, '-', fontsize=12, fontweight='bold',
+                ha='center', va='center', color=clr)
+
+        # Power rails (V+ and V-)
+        ax.plot([-0.1, -0.1], [0.45, 0.85], color='#888', lw=1.2,
+                linestyle='--')
+        ax.plot([-0.1, -0.1], [-0.45, -0.85], color='#888', lw=1.2,
+                linestyle='--')
+        ax.text(-0.1, 0.95, 'V+', fontsize=9, ha='center', color='#888')
+        ax.text(-0.1, -0.95, 'V-', fontsize=9, ha='center', color='#888')
+
+        # Terminal labels
+        ax.text(-1.5, 0.35, 'IN+', fontsize=9, ha='right', va='center',
+                color=clr)
+        ax.text(-1.5, -0.35, 'IN-', fontsize=9, ha='right', va='center',
+                color=clr)
+        ax.text(1.6, 0.0, 'OUT', fontsize=9, ha='left', va='center',
+                color=clr)
+
+        ax.text(0, -1.3, name, ha='center', va='top', fontsize=11,
+                fontweight='bold', color='#333333')
+
+    def _draw_comparator(self, ax, name):
+        """Draw a comparator symbol (similar to op-amp but with digital output)."""
+        lw = 2.0
+        clr = '#6A1B9A'
+
+        # Triangle body
+        tri_x = [-0.7, -0.7, 0.8, -0.7]
+        tri_y = [-0.7, 0.7, 0.0, -0.7]
+        ax.fill(tri_x, tri_y, fc='#F0E0F8', ec=clr, lw=lw)
+
+        # Input leads
+        ax.plot([-1.4, -0.7], [0.35, 0.35], color=clr, lw=lw)
+        ax.plot([-1.4, -0.7], [-0.35, -0.35], color=clr, lw=lw)
+
+        # Output lead
+        ax.plot([0.8, 1.5], [0.0, 0.0], color=clr, lw=lw)
+
+        # +/- labels
+        ax.text(-0.5, 0.35, '+', fontsize=12, fontweight='bold',
+                ha='center', va='center', color=clr)
+        ax.text(-0.5, -0.35, '-', fontsize=12, fontweight='bold',
+                ha='center', va='center', color=clr)
+
+        # Digital output indicator (small square wave)
+        sq_x = [1.0, 1.0, 1.2, 1.2, 1.4, 1.4]
+        sq_y = [-0.15, 0.15, 0.15, -0.15, -0.15, 0.15]
+        ax.plot(sq_x, sq_y, color=clr, lw=1.2)
+
+        # Terminal labels
+        ax.text(-1.5, 0.35, 'IN+', fontsize=9, ha='right', va='center',
+                color=clr)
+        ax.text(-1.5, -0.35, 'IN-', fontsize=9, ha='right', va='center',
+                color=clr)
+        ax.text(1.6, 0.0, 'OUT', fontsize=9, ha='left', va='center',
+                color=clr)
+
+        ax.text(0, -1.3, name, ha='center', va='top', fontsize=11,
+                fontweight='bold', color='#333333')
+
+    def _draw_mosfet(self, ax, name):
+        """Draw an N-channel MOSFET symbol."""
+        lw = 2.0
+        clr = '#E65100'
+
+        # Vertical channel line
+        ax.plot([0, 0], [-0.6, 0.6], color=clr, lw=lw + 0.5)
+
+        # Gate line (left of channel)
+        ax.plot([-0.5, -0.5], [-0.4, 0.4], color=clr, lw=lw)
+
+        # Gate lead
+        ax.plot([-1.3, -0.5], [0, 0], color=clr, lw=lw)
+
+        # Insulating gap between gate and channel
+        ax.plot([-0.25, -0.25], [-0.4, 0.4], color=clr, lw=1.0,
+                linestyle=':')
+
+        # Source (bottom) - horizontal line + lead down
+        ax.plot([0, 0.6], [-0.4, -0.4], color=clr, lw=lw)
+        ax.plot([0.6, 0.6], [-0.4, -1.0], color=clr, lw=lw)
+
+        # Drain (top) - horizontal line + lead up
+        ax.plot([0, 0.6], [0.4, 0.4], color=clr, lw=lw)
+        ax.plot([0.6, 0.6], [0.4, 1.0], color=clr, lw=lw)
+
+        # Body connection (center, with arrow indicating N-channel)
+        ax.plot([0, 0.6], [0.0, 0.0], color=clr, lw=lw)
+        ax.annotate('', xy=(0.45, 0.0), xytext=(0.1, 0.0),
+                    arrowprops=dict(arrowstyle='->', color=clr, lw=1.5))
+
+        # Terminal labels
+        ax.text(-1.4, 0.0, 'G', fontsize=10, fontweight='bold',
+                ha='right', va='center', color=clr)
+        ax.text(0.75, 1.05, 'D', fontsize=10, fontweight='bold',
+                ha='left', va='center', color=clr)
+        ax.text(0.75, -1.05, 'S', fontsize=10, fontweight='bold',
+                ha='left', va='center', color=clr)
+
+        # Body diode (small)
+        bd_x = [0.45, 0.75, 0.60, 0.45]
+        bd_y = [-0.15, -0.15, 0.05, -0.15]
+        ax.fill(bd_x, bd_y, fc=clr, ec=clr, lw=0.8, alpha=0.4)
+
+        ax.text(0, -1.4, name, ha='center', va='top', fontsize=11,
+                fontweight='bold', color='#333333')
+
+
+# Matplotlib Circle patch helper
+from matplotlib.patches import Circle as plt_Circle

@@ -312,9 +312,18 @@ class SimulationPipeline:
         """
         Run complete TX -> Channel -> RX pipeline.
 
+        Automatically selects SPICE or Python engine based on
+        config.simulation_engine setting.
+
         Returns:
             Dict with 'TX', 'Channel', 'RX' StepResult objects
         """
+        engine = getattr(self.config, 'simulation_engine', 'spice')
+
+        if engine == 'python':
+            return self.run_python_engine()
+
+        # Default: SPICE pipeline
         self.run_step_tx()
         if self.step_tx.status != 'done':
             return self._results_dict()
@@ -330,6 +339,118 @@ class SimulationPipeline:
             self.compute_ber()
 
         return self._results_dict()
+
+    def run_python_engine(self) -> Dict[str, StepResult]:
+        """
+        Run all-Python system-level simulation for non-SPICE papers.
+
+        Uses the Python simulation engine (cosim.python_engine) which
+        supports OFDM, BFSK, PWM-ASK, Manchester, and standard OOK.
+        """
+        from .python_engine import run_python_simulation
+
+        t0 = _time.time()
+        cfg = self.config
+
+        # TX step
+        self.step_tx.status = 'running'
+        self._notify('TX', 'running', f'Python engine: {cfg.modulation} modulation...')
+
+        try:
+            result = run_python_simulation(cfg)
+
+            # TX done
+            self.step_tx.status = 'done'
+            self.step_tx.duration_s = _time.time() - t0
+            self.step_tx.message = (
+                f'{cfg.n_bits} bits @ {cfg.data_rate_bps/1e3:.0f} kbps, '
+                f'{cfg.modulation} modulation'
+            )
+            self.step_tx.outputs = {
+                'n_bits': cfg.n_bits,
+                'P_dc_mW': np.mean(result['P_tx']) * 1e3,
+            }
+            self._tx_bits = result['bits_tx']
+            self._notify('TX', 'done', self.step_tx.message)
+
+            # Channel done
+            self.step_channel.status = 'done'
+            self.step_channel.duration_s = 0.0
+            self.step_channel.message = (
+                f'G_ch={result["channel_gain"]:.4e}, '
+                f'P_rx_avg={result["P_rx_avg_uW"]:.2f} uW'
+            )
+            self.step_channel.outputs = {
+                'G_ch': result['channel_gain'],
+                'P_rx_avg_uW': result['P_rx_avg_uW'],
+                'I_ph_avg_uA': result['I_ph_avg_uA'],
+            }
+            self._notify('Channel', 'done', self.step_channel.message)
+
+            # RX done
+            self.step_rx.status = 'done'
+            self.step_rx.duration_s = _time.time() - t0
+            ber = result['ber']
+            self.step_rx.message = (
+                f'Python sim complete ({self.step_rx.duration_s:.2f}s) | '
+                f'BER={ber:.4e} ({result["n_errors"]}/{result["n_bits_tested"]})'
+            )
+            self.step_rx.outputs = {
+                'engine': 'python',
+                'ber': ber,
+                'ber_n_errors': result['n_errors'],
+                'ber_n_bits': result['n_bits_tested'],
+                'snr_est_dB': result['snr_est_dB'],
+                'python_result': result,
+            }
+            self._notify('RX', 'done', self.step_rx.message)
+
+            # Save results to session directory
+            self._save_python_results(result)
+
+        except Exception as e:
+            self.step_rx.status = 'error'
+            self.step_rx.message = f'Python engine error: {e}'
+            self.step_rx.duration_s = _time.time() - t0
+            self._notify('RX', 'error', str(e))
+
+        return self._results_dict()
+
+    def _save_python_results(self, result: Dict) -> None:
+        """Save Python engine results to session directory."""
+        try:
+            # Save waveform data as numpy arrays
+            data_dir = self.session_dir / 'raw'
+            data_dir.mkdir(parents=True, exist_ok=True)
+
+            np.savez(
+                data_dir / 'python_results.npz',
+                time=result['time'],
+                P_tx=result['P_tx'],
+                P_rx=result['P_rx'],
+                I_ph=result['I_ph'],
+                V_rx=result['V_rx'],
+                bits_tx=result['bits_tx'],
+                bits_rx=result['bits_rx'],
+            )
+
+            # Save summary as JSON
+            import json
+            summary = {
+                'engine': 'python',
+                'modulation': result['modulation'],
+                'ber': result['ber'],
+                'n_errors': result['n_errors'],
+                'n_bits_tested': result['n_bits_tested'],
+                'snr_est_dB': result['snr_est_dB'],
+                'channel_gain': result['channel_gain'],
+                'P_rx_avg_uW': result['P_rx_avg_uW'],
+                'I_ph_avg_uA': result['I_ph_avg_uA'],
+            }
+            (data_dir / 'python_summary.json').write_text(
+                json.dumps(summary, indent=2), encoding='utf-8')
+        except Exception:
+            pass  # Don't fail the simulation if saving fails
 
     def compute_ber(self) -> Optional[Dict]:
         """
