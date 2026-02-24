@@ -7,17 +7,18 @@ simulated values against published targets.
 Reads .raw files to extract measured values after simulation.
 """
 
-import sys, os
+import sys, os, glob
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QComboBox, QPushButton, QTableWidget, QTableWidgetItem,
-    QHeaderView,
+    QHeaderView, QScrollArea, QSplitter, QListWidget,
+    QListWidgetItem,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QColor, QPixmap
 
 from cosim.system_config import SystemConfig
 from cosim.raw_parser import LTSpiceRawParser
@@ -71,6 +72,51 @@ class ValidationTab(QWidget):
         self._summary_label.setStyleSheet(
             'font-size: 13px; font-weight: bold; padding: 10px;')
         main.addWidget(self._summary_label)
+
+        # ── Paper Figure Generation ──
+        fig_group = QGroupBox('Paper Figure Generation')
+        fig_layout = QVBoxLayout(fig_group)
+
+        fig_top = QHBoxLayout()
+        fig_top.addWidget(QLabel('Paper:'))
+        self._fig_paper_combo = QComboBox()
+        self._fig_paper_combo.addItem('-- All Papers --', 'all')
+        try:
+            from papers import list_papers
+            for key, label, ref in list_papers():
+                self._fig_paper_combo.addItem(f'{label}', key)
+        except ImportError:
+            pass
+        fig_top.addWidget(self._fig_paper_combo)
+
+        self._fig_run_btn = QPushButton('Generate Figures')
+        self._fig_run_btn.clicked.connect(self._run_figure_generation)
+        fig_top.addWidget(self._fig_run_btn)
+        fig_top.addStretch()
+        fig_layout.addLayout(fig_top)
+
+        self._fig_status = QLabel('Ready')
+        self._fig_status.setStyleSheet('color: #555; padding: 2px;')
+        fig_layout.addWidget(self._fig_status)
+
+        # Image list + preview
+        fig_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._fig_list = QListWidget()
+        self._fig_list.currentItemChanged.connect(self._on_figure_selected)
+        fig_splitter.addWidget(self._fig_list)
+
+        self._fig_preview = QLabel('Select a figure to preview')
+        self._fig_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._fig_preview.setMinimumSize(400, 300)
+        self._fig_preview.setStyleSheet('background: #f0f0f0; border: 1px solid #ccc;')
+        scroll = QScrollArea()
+        scroll.setWidget(self._fig_preview)
+        scroll.setWidgetResizable(True)
+        fig_splitter.addWidget(scroll)
+        fig_splitter.setSizes([200, 500])
+
+        fig_layout.addWidget(fig_splitter)
+        main.addWidget(fig_group)
 
     def update_config(self, config: SystemConfig):
         self._config = config
@@ -303,3 +349,86 @@ class ValidationTab(QWidget):
             self._summary_label.setText(
                 'Simulation data loaded. '
                 'Some targets have no comparison reference.')
+
+    # ── Figure Generation ──
+
+    def _run_figure_generation(self):
+        """Run paper validation to generate figures in a background thread."""
+        paper_key = self._fig_paper_combo.currentData()
+        self._fig_run_btn.setEnabled(False)
+        self._fig_status.setText('Running validation...')
+        self._fig_status.setStyleSheet('color: #0066cc;')
+
+        self._fig_thread = _FigureWorker(paper_key)
+        self._fig_thread.finished.connect(self._on_figures_done)
+        self._fig_thread.start()
+
+    def _on_figures_done(self, output_dir, success, message):
+        """Called when figure generation thread completes."""
+        self._fig_run_btn.setEnabled(True)
+        if success:
+            self._fig_status.setText(f'Done: {message}')
+            self._fig_status.setStyleSheet('color: green;')
+            self._load_figure_list(output_dir)
+        else:
+            self._fig_status.setText(f'Error: {message}')
+            self._fig_status.setStyleSheet('color: red;')
+
+    def _load_figure_list(self, output_dir):
+        """Populate figure list from generated PNGs."""
+        self._fig_list.clear()
+        if not os.path.isdir(output_dir):
+            return
+        png_files = sorted(glob.glob(os.path.join(output_dir, '**', '*.png'),
+                                      recursive=True))
+        for path in png_files:
+            rel = os.path.relpath(path, output_dir)
+            item = QListWidgetItem(rel)
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            self._fig_list.addItem(item)
+
+        if self._fig_list.count() > 0:
+            self._fig_list.setCurrentRow(0)
+
+    def _on_figure_selected(self, current, previous):
+        """Show selected figure in preview."""
+        if current is None:
+            return
+        path = current.data(Qt.ItemDataRole.UserRole)
+        if path and os.path.isfile(path):
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(
+                    self._fig_preview.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation)
+                self._fig_preview.setPixmap(scaled)
+            else:
+                self._fig_preview.setText('Could not load image')
+
+
+class _FigureWorker(QThread):
+    """Background thread for running paper validation."""
+    finished = pyqtSignal(str, bool, str)
+
+    def __init__(self, paper_key):
+        super().__init__()
+        self._paper_key = paper_key
+
+    def run(self):
+        try:
+            from papers import PAPERS, run_paper, run_all_papers
+            base_dir = os.path.join('workspace', 'validation')
+
+            if self._paper_key == 'all':
+                results = run_all_papers(base_dir)
+                n_pass = sum(results.values())
+                msg = f'{n_pass}/{len(results)} papers passed'
+                self.finished.emit(base_dir, True, msg)
+            else:
+                out = os.path.join(base_dir, self._paper_key)
+                passed = run_paper(self._paper_key, out)
+                msg = f'{"PASS" if passed else "FAIL"}'
+                self.finished.emit(out, True, msg)
+        except Exception as e:
+            self.finished.emit('', False, str(e))
