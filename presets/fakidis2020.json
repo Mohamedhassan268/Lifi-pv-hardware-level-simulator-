@@ -1,0 +1,64 @@
+{
+  "preset_name": "fakidis2020",
+  "paper_reference": "Fakidis et al., IEEE JSAC 2020 - Indoor Optical Wireless Power Transfer to Small Cells at Nighttime",
+
+  "led_part": "LXM5-PD01",
+  "driver_part": "ADA4891",
+  "bias_current_A": 0.700,
+  "modulation_depth": 0.20,
+  "led_radiated_power_mW": 50.0,
+  "led_half_angle_deg": 30.0,
+  "led_driver_re": 10.0,
+  "led_gled": 0.50,
+  "lens_transmittance": 0.90,
+
+  "distance_m": 1.0,
+  "tx_angle_deg": 0.0,
+  "rx_tilt_deg": 0.0,
+
+  "pv_part": "SM141K",
+  "sc_area_cm2": 25.0,
+  "sc_responsivity": 0.40,
+  "sc_cj_nF": 1200.0,
+  "sc_rsh_kOhm": 50.0,
+  "sc_iph_uA": 800.0,
+  "sc_vmpp_mV": 580.0,
+  "sc_impp_uA": 700.0,
+  "sc_pmpp_uW": 406.0,
+
+  "r_sense_ohm": 2.2,
+  "ina_part": "INA322",
+  "ina_gain_dB": 40.0,
+  "ina_gbw_kHz": 700.0,
+
+  "comparator_part": "TLV7011",
+
+  "bpf_stages": 2,
+  "bpf_f_low_Hz": 500.0,
+  "bpf_f_high_Hz": 5000.0,
+  "bpf_rhp": 100000.0,
+  "bpf_chp_pF": 470000.0,
+  "bpf_rlp": 10000.0,
+  "bpf_clf_nF": 3.3,
+
+  "dcdc_fsw_kHz": 100.0,
+  "dcdc_l_uH": 10.0,
+  "dcdc_cp_uF": 22.0,
+  "dcdc_cl_uF": 100.0,
+  "r_load_ohm": 100000.0,
+
+  "t_stop_s": 0.005,
+  "data_rate_bps": 2000.0,
+  "modulation": "OOK",
+  "prbs_order": 7,
+  "n_bits": 127,
+
+  "noise_enable": false,
+  "ina_noise_nV_rtHz": 45.0,
+  "shot_noise_enable": true,
+  "thermal_noise_enable": true,
+
+  "target_harvested_power_uW": 400.0,
+  "target_ber": 0.01,
+  "target_noise_rms_mV": 12.0
+}

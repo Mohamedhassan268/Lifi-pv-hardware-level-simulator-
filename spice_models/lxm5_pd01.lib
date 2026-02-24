@@ -1,0 +1,38 @@
+* =============================================================
+* LXM5-PD01 White LED - SPICE Model
+* Philips Lumileds with Fraen FLP-S9-SP Lens
+* =============================================================
+* Based on InGaN LED characteristics
+* Dominant wavelength: 530 nm (for PV coupling)
+* GLED = 0.88 W/A
+* Forward voltage: 3.2V @ 350mA
+* =============================================================
+
+.MODEL LXM5_LED D(
++ IS=1e-20
++ N=2.5
++ RS=0.8
++ CJO=200p
++ VJ=3.0
++ M=0.5
++ EG=2.7
++ XTI=2
++ BV=5
++ IBV=10u
++ TT=50n
++ )
+
+* Simplified subcircuit with optical output
+.SUBCKT LXM5_PD01 anode cathode optical_out
+* anode = LED anode
+* cathode = LED cathode
+* optical_out = voltage representing optical power (1V = 1W)
+
+Dled anode cathode LXM5_LED
+
+* Optical output: P_opt = GLED * I(Dled)
+* GLED = 0.88 W/A, Lens transmittance = 0.85
+* Effective: 0.88 * 0.85 = 0.748 W/A
+Bopt optical_out 0 V = 0.748 * I(Dled)
+
+.ENDS LXM5_PD01

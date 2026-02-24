@@ -1,0 +1,12 @@
+﻿# Large data files
+*.raw
+*.bin
+*.dat
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/

@@ -71,16 +71,18 @@ class KadirveluParams:
     INA_GAIN_DB = 40.0                # dB
     INA_GBW_kHz = 700.0               # kHz
     
-    # --- Band-Pass Filter (2-stage) ---
-    BPF_RHP = 33e3                    # Ω (high-pass)
-    BPF_CHP_pF = 482.0                # pF (high-pass)
-    BPF_RLP = 10e3                    # Ω (low-pass)
-    BPF_CLF_nF = 64.0                 # nF (low-pass)
+    # --- Band-Pass Filter (2-stage, active inverting, TLV2379) ---
+    BPF_RHP = 100e3                   # Ω (HP bias resistor to Vref)
+    BPF_CHP_pF = 470000.0            # pF (HP coupling cap, 470 nF)
+    BPF_RLP = 10e3                    # Ω (Rin = Rfb = 10k, unity gain)
+    BPF_CLF_nF = 1.5                  # nF (LP feedback cap)
     BPF_STAGES = 2
-    
-    # Derived: fL ≈ 1/(2π × 33k × 482p) ≈ 10 kHz (HP corner)
-    # Derived: fH ≈ 1/(2π × 10k × 64n) ≈ 250 Hz (LP corner)
-    # But paper says 700 Hz - 10 kHz passband, so there's complexity in the active filter
+
+    # HP corner: f_HP ≈ 1/(2π × (Rhp||Rin) × Chp)
+    #   Rhp||Rin = 100k||10k = 9.09k → f_HP ≈ 37 Hz
+    #   τ_HP ≈ 4.3 ms = 21 bit periods @ 5 kbps (handles PRBS-7 run lengths)
+    # LP corner: f_LP = 1/(2π × Rfb × Cfb) = 1/(2π × 10k × 1.5n) ≈ 10.6 kHz
+    # Passband: ~37 Hz to ~10.6 kHz (data at 5 kHz well within passband)
     
     # --- Voltage Reference ---
     VREF = 3.3                        # V (from TLV2401)
@@ -522,17 +524,246 @@ quit
             return False
     
     def run_frequency_sweep(self, f_start=10, f_stop=100e3, n_points=100):
-        """Run AC analysis for frequency response."""
-        # TODO: Implement AC analysis
-        pass
-    
-    def run_ber_analysis(self, 
+        """
+        Run AC analysis for frequency response.
+
+        Uses the unified netlist generator and ngspice runner to perform
+        AC sweep and extract magnitude/phase at key nodes.
+
+        Args:
+            f_start: Start frequency (Hz)
+            f_stop: Stop frequency (Hz)
+            n_points: Points per decade
+
+        Returns:
+            Dict with 'frequency', 'ina_out_dB', 'bpf_out_dB',
+            'ina_out_phase', 'bpf_out_phase', and '3dB_bandwidth_Hz'
+        """
+        import tempfile
+        from systems.kadirvelu2021_netlist import FullSystemNetlist
+        from simulation.ngspice_runner import NgSpiceRunner
+        from simulation.analysis import frequency_response_from_ac, find_3dB_bandwidth
+
+        output_dir = tempfile.mkdtemp(prefix='ngspice_ac_')
+
+        # Generate netlist with AC analysis enabled
+        gen = FullSystemNetlist(self.params)
+        netlist = gen.generate(
+            source_type='sine',
+            f_signal=5e3,
+            modulation_depth=0.33,
+            include_dcdc=False,
+            ac_analysis=True,
+            t_stop=1e-3,
+        )
+
+        # Save netlist
+        netlist_path = os.path.join(output_dir, 'ac_analysis.cir')
+        gen.save(netlist_path, netlist)
+
+        # Run via ngspice
+        runner = NgSpiceRunner(self.ngspice_path)
+        output_nodes = ['V(ina_out)', 'V(bpf_out)']
+        ac_results = runner.run_ac(
+            netlist_path, output_nodes,
+            output_dir=output_dir, timeout=120
+        )
+
+        if ac_results is None:
+            print("AC analysis failed.")
+            return None
+
+        # Extract frequency response
+        results = {'frequency': ac_results.get('frequency')}
+
+        for node_label, node_name in [('ina_out', 'V(ina_out)'),
+                                       ('bpf_out', 'V(bpf_out)')]:
+            if node_name in ac_results:
+                freq, mag_dB, phase_deg = frequency_response_from_ac(
+                    ac_results, node_name
+                )
+                results[f'{node_label}_dB'] = mag_dB
+                results[f'{node_label}_phase'] = phase_deg
+                bw = find_3dB_bandwidth(freq, mag_dB)
+                results[f'{node_label}_3dB_Hz'] = bw
+                print(f"  {node_label}: -3dB bandwidth = "
+                      f"{bw/1e3:.2f} kHz" if bw else
+                      f"  {node_label}: bandwidth not found")
+
+        self.results['ac'] = results
+        return results
+
+    def run_ber_analysis(self,
                          modulation_depths=[0.1, 0.2, 0.33, 0.5],
                          fsw_values=[50e3, 100e3, 200e3],
                          n_bits=1000):
-        """Run BER analysis for different modulation depths and switching frequencies."""
-        # TODO: Implement BER analysis with PRBS
-        pass
+        """
+        Run BER analysis for different modulation depths and switching frequencies.
+
+        For each (modulation_depth, fsw) combination:
+        1. Generate PRBS OOK signal → PWL file
+        2. Generate full system netlist with PWL input
+        3. Run ngspice transient simulation
+        4. Sample comparator output and compute BER
+
+        Args:
+            modulation_depths: List of modulation depths to sweep
+            fsw_values: List of DC-DC switching frequencies to sweep
+            n_bits: Number of bits per simulation
+
+        Returns:
+            Dict with 'ber_matrix' (len(mod_depths) x len(fsw_values)),
+            'modulation_depths', 'fsw_values', and per-run details
+        """
+        import tempfile
+        from systems.kadirvelu2021_netlist import FullSystemNetlist
+        from simulation.ngspice_runner import NgSpiceRunner
+        from simulation.prbs_generator import (
+            generate_prbs, generate_square_ook, write_pwl_file
+        )
+        from simulation.analysis import calculate_ber_from_transient
+
+        runner = NgSpiceRunner(self.ngspice_path)
+        gen = FullSystemNetlist(self.params)
+
+        bit_rate = 5e3  # 5 kbps (paper operating point)
+        bit_period = 1.0 / bit_rate
+        t_stop = n_bits / bit_rate
+
+        # Generate PRBS bits (same sequence for all runs)
+        bits = generate_prbs(order=7, n_bits=n_bits, seed=42)
+
+        ber_matrix = np.zeros((len(modulation_depths), len(fsw_values)))
+        run_details = []
+
+        print(f"BER Analysis: {len(modulation_depths)} mod depths x "
+              f"{len(fsw_values)} fsw values = "
+              f"{len(modulation_depths) * len(fsw_values)} simulations")
+        print(f"  Bits per run: {n_bits}, Bit rate: {bit_rate/1e3:.0f} kbps")
+
+        for i, mod_depth in enumerate(modulation_depths):
+            for j, fsw in enumerate(fsw_values):
+                print(f"\n--- Run [{i},{j}]: m={mod_depth}, "
+                      f"fsw={fsw/1e3:.0f} kHz ---")
+
+                run_dir = tempfile.mkdtemp(prefix=f'ber_m{mod_depth}_fsw{int(fsw)}_')
+
+                # Generate OOK PWL signal
+                # Compute optical power levels
+                p = self.params
+                Gop = p.optical_channel_gain()
+                P_dc = (0.12 / p.LED_DRIVER_RE * p.LED_GLED *
+                        p.LENS_TRANSMITTANCE * Gop)
+                P_high = P_dc * (1 + mod_depth)
+                P_low = P_dc * (1 - mod_depth)
+
+                # Build PWL from PRBS bits
+                rise_time = bit_period * 0.01
+                time_pts = [0.0]
+                volt_pts = [P_high if bits[0] == 1 else P_low]
+
+                for k in range(1, len(bits)):
+                    if bits[k] != bits[k-1]:
+                        t_trans = k * bit_period
+                        v_prev = P_high if bits[k-1] == 1 else P_low
+                        v_next = P_high if bits[k] == 1 else P_low
+                        time_pts.append(t_trans - rise_time/2)
+                        volt_pts.append(v_prev)
+                        time_pts.append(t_trans + rise_time/2)
+                        volt_pts.append(v_next)
+
+                time_pts.append(n_bits * bit_period)
+                volt_pts.append(P_high if bits[-1] == 1 else P_low)
+
+                pwl_path = os.path.join(run_dir, 'ook_signal.pwl')
+                write_pwl_file(np.array(time_pts), np.array(volt_pts), pwl_path)
+
+                # Generate netlist with PWL input
+                netlist = gen.generate(
+                    source_type='pwl',
+                    pwl_file=pwl_path,
+                    modulation_depth=mod_depth,
+                    fsw=fsw,
+                    t_stop=t_stop,
+                    t_step=bit_period / 100,
+                    include_dcdc=True,
+                    ac_analysis=False,
+                )
+
+                netlist_path = os.path.join(run_dir, 'ber_test.cir')
+                gen.save(netlist_path, netlist)
+
+                # Run transient simulation
+                output_nodes = ['V(dout)', 'V(bpf_out)']
+                sim_results = runner.run_transient(
+                    netlist_path, output_nodes,
+                    output_dir=run_dir, timeout=300
+                )
+
+                if sim_results is None:
+                    print(f"  Simulation FAILED")
+                    ber_matrix[i, j] = float('nan')
+                    continue
+
+                # Calculate BER from comparator output
+                time_arr = sim_results.get('time')
+                dout = sim_results.get('V(dout)')
+
+                if time_arr is None or dout is None:
+                    print(f"  Missing output data")
+                    ber_matrix[i, j] = float('nan')
+                    continue
+
+                # Use midpoint of supply as threshold (push-pull comparator)
+                threshold = 1.65  # Vcc/2
+
+                ber_result = calculate_ber_from_transient(
+                    bits, dout, time_arr, threshold, bit_period,
+                    sample_offset=0.5, skip_bits=20
+                )
+
+                ber_val = ber_result['ber']
+                ber_matrix[i, j] = ber_val
+
+                detail = {
+                    'modulation_depth': mod_depth,
+                    'fsw': fsw,
+                    'ber': ber_val,
+                    'n_errors': ber_result['n_errors'],
+                    'n_bits_tested': ber_result['n_bits_tested'],
+                    'snr_est_dB': ber_result.get('snr_est_dB'),
+                    'output_dir': run_dir,
+                }
+                run_details.append(detail)
+
+                print(f"  BER = {ber_val:.4e} "
+                      f"({ber_result['n_errors']}/{ber_result['n_bits_tested']} errors)")
+
+        # Summary
+        results = {
+            'ber_matrix': ber_matrix,
+            'modulation_depths': modulation_depths,
+            'fsw_values': fsw_values,
+            'bit_rate': bit_rate,
+            'n_bits': n_bits,
+            'run_details': run_details,
+        }
+
+        self.results['ber'] = results
+
+        print(f"\n{'='*60}")
+        print("BER RESULTS MATRIX")
+        print(f"{'='*60}")
+        header = "mod_depth \\ fsw | " + " | ".join(
+            f"{f/1e3:.0f}kHz" for f in fsw_values)
+        print(header)
+        print("-" * len(header))
+        for i, m in enumerate(modulation_depths):
+            row = f"  {m:.2f}           | " + " | ".join(
+                f"{ber_matrix[i,j]:.2e}" for j in range(len(fsw_values)))
+            print(row)
+
+        return results
     
     def calculate_theoretical_values(self):
         """Calculate expected values from paper equations."""

@@ -1,0 +1,39 @@
+* =============================================================
+* ADA4891 High-Speed Op-Amp - Behavioral SPICE Model
+* Analog Devices
+* =============================================================
+* GBW: 240 MHz
+* Slew rate: 170 V/us
+* Input noise: 5.9 nV/rtHz
+* Supply: 2.7V to 5.5V
+* Output current: 80 mA
+* Quiescent: 3.3 mA
+* =============================================================
+
+.SUBCKT ADA4891 INP INN OUT VCC VEE
+* INP = non-inverting input
+* INN = inverting input
+* OUT = output
+* VCC = positive supply
+* VEE = negative supply
+
+* Input impedance
+Rinp INP 0 10MEG
+Rinn INN 0 10MEG
+
+* Open-loop gain: 80 dB (10000)
+Ediff diff_int 0 INP INN 10000
+
+* Dominant pole: f_p = GBW / A_OL = 240M / 10000 = 24 kHz
+Rpole diff_int pole_out 1k
+Cpole pole_out 0 6.63n
+
+* Second pole at 500 MHz (for phase margin)
+Rp2 pole_out p2_out 1k
+Cp2 p2_out 0 0.318p
+
+* Output with rail clamping and series resistance
+Bout out_int 0 V = MAX(MIN(V(p2_out), V(VCC)-0.2), V(VEE)+0.2)
+Rout out_int OUT 10
+
+.ENDS ADA4891

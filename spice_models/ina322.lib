@@ -1,0 +1,50 @@
+* =============================================================
+* INA322 Instrumentation Amplifier - Behavioral SPICE Model
+* Texas Instruments, Low-Power (30uA)
+* =============================================================
+* GBW: 700 kHz
+* Gain: set by external R1, R2: G = 5 + 5*(R1/R2)
+* Default: R1=191k, R2=10k => G=100.5 (40 dB)
+* Input noise: 7.7 nV/rtHz
+* CMRR: 80 dB
+* Supply: 2.7V to 5.5V
+* =============================================================
+
+* Fixed-gain version (G=100, matching Kadirvelu 2021)
+.SUBCKT INA322_G100 INP INN OUT VCC VEE
+* INP = non-inverting differential input
+* INN = inverting differential input
+* OUT = output
+* VCC = positive supply
+* VEE = negative supply / ground
+
+* Input impedance (>1 Gohm)
+Rinp INP 0 1G
+Rinn INN 0 1G
+
+* Differential gain = 100 (40 dB)
+Ediff diff_int 0 INP INN 100
+
+* Pole 1: f_p1 = GBW/gain = 700k/100 = 7 kHz
+Rp1 diff_int p1 1k
+Cp1 p1 0 22.7n
+
+* Pole 2: f_p2 = 70 kHz (non-dominant)
+Rp2 p1 p2 1k
+Cp2 p2 0 2.27n
+
+* Output buffer with rail clamping
+* Output swings to within 50mV of rails
+Bout OUT 0 V = MAX(MIN(V(p2), V(VCC)-0.05), V(VEE)+0.05)
+
+.ENDS INA322_G100
+
+* Parametric-gain version
+.SUBCKT INA322 INP INN OUT VCC VEE R1A R1B
+* R1A, R1B = gain resistor pins
+* Gain = 5 + 5 * V(R1A,R1B) / (I_internal * 10k)
+* Simplified: use fixed gain of 100
+
+Xinst INP INN OUT VCC VEE INA322_G100
+
+.ENDS INA322

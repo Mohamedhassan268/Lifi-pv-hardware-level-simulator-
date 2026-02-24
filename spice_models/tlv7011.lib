@@ -1,0 +1,36 @@
+* =============================================================
+* TLV7011 Nanopower Comparator - Behavioral SPICE Model
+* Texas Instruments
+* =============================================================
+* Propagation delay: 260 ns typical
+* Quiescent current: 335 nA
+* Supply: 1.6V to 5.5V
+* Push-pull output
+* No internal hysteresis
+* =============================================================
+
+.SUBCKT TLV7011 INP INN OUT VCC VEE
+* INP = non-inverting input
+* INN = inverting input
+* OUT = push-pull output
+* VCC = positive supply
+* VEE = negative supply / ground
+
+* High input impedance
+Rinp INP 0 1T
+Rinn INN 0 1T
+
+* Comparator decision (ideal)
+Bcomp comp_int 0 V = IF(V(INP)-V(INN) > 0, V(VCC), V(VEE))
+
+* Propagation delay model: RC with tau = 260ns
+Rdel comp_int del_out 1k
+Cdel del_out 0 260p
+
+* Output buffer
+Eout OUT 0 del_out 0 1
+
+* Quiescent current (335 nA from VCC to VEE)
+Rq VCC VEE 9.85MEG
+
+.ENDS TLV7011

@@ -1,0 +1,42 @@
+* =============================================================
+* MOSFET Models for Kadirvelu 2021 System
+* =============================================================
+
+* BSD235N - Infineon N-Channel MOSFET (LED Driver)
+* Vds_max=30V, Rds_on=0.18 ohm, Vgs_th=1.2V
+.MODEL BSD235N NMOS(
++ VTO=1.2
++ KP=150m
++ LAMBDA=0.02
++ RD=0.09
++ RS=0.09
++ CBD=50p
++ CGS=350p
++ CGD=30p
++ )
+
+* NTS4409 - ON Semiconductor N-Channel MOSFET (DC-DC Switch)
+* Vds_max=30V, Rds_on=52 mohm, Vgs_th=0.8V
+.MODEL NTS4409 NMOS(
++ VTO=0.8
++ KP=200m
++ LAMBDA=0.01
++ RD=0.026
++ RS=0.026
++ CBD=120p
++ CGS=840p
++ CGD=60p
++ )
+
+* Schottky Diode for DC-DC Converter
+.MODEL SCHOTTKY_DCDC D(
++ IS=1e-5
++ N=1.05
++ RS=0.1
++ CJO=50p
++ VJ=0.3
++ M=0.5
++ BV=40
++ IBV=1u
++ TT=5n
++ )

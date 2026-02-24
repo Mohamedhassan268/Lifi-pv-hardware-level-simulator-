@@ -1,0 +1,34 @@
+* =============================================================
+* TLV2379 Quad RRIO Op-Amp - Behavioral SPICE Model
+* Texas Instruments
+* =============================================================
+* GBW: 100 kHz
+* Slew rate: 0.04 V/us
+* Input noise: 39 nV/rtHz
+* Supply: 2.5V to 16V
+* Quiescent: 13 uA per amplifier
+* Rail-to-rail input and output
+* =============================================================
+
+.SUBCKT TLV2379 INP INN OUT VCC VEE
+* INP = non-inverting input
+* INN = inverting input
+* OUT = output
+* VCC = positive supply
+* VEE = negative supply
+
+* CMOS input impedance
+Rinp INP 0 1T
+Rinn INN 0 1T
+
+* Open-loop gain: 100 dB
+Ediff diff_int 0 INP INN 100000
+
+* Dominant pole: f_p = GBW / A_OL = 100k / 100000 = 1 Hz
+Rpole diff_int pole_out 1k
+Cpole pole_out 0 159u
+
+* Rail-to-rail output (within 20mV of rails)
+Bout OUT 0 V = MAX(MIN(V(pole_out), V(VCC)-0.02), V(VEE)+0.02)
+
+.ENDS TLV2379
