@@ -96,11 +96,16 @@ class SimulationEngineTab(QWidget):
         status_row = QHBoxLayout()
         ltspice_status = ('Available' if self._ltspice.available
                           else 'Not found')
-        status_row.addWidget(QLabel(f'LTspice: {ltspice_status}'))
+        self._ltspice_label = QLabel(f'LTspice: {ltspice_status}')
+        status_row.addWidget(self._ltspice_label)
+        self._engine_mode_label = QLabel('')
+        self._engine_mode_label.setStyleSheet('font-weight: bold; padding: 2px 8px;')
+        status_row.addWidget(self._engine_mode_label)
         status_row.addStretch()
         self._session_label = QLabel('Session: (none)')
         status_row.addWidget(self._session_label)
         main.addLayout(status_row)
+        self._update_engine_label()
 
         # ---- Pipeline steps ----
         pipe_grp = QGroupBox('Simulation Pipeline')
@@ -224,6 +229,22 @@ class SimulationEngineTab(QWidget):
 
     def update_config(self, config: SystemConfig):
         self._config = config
+        self._update_engine_label()
+
+    def _update_engine_label(self):
+        """Update the engine mode indicator based on current config."""
+        engine = getattr(self._config, 'simulation_engine', 'spice')
+        mod = getattr(self._config, 'modulation', 'OOK')
+        if engine == 'python':
+            self._engine_mode_label.setText(f'Engine: Python ({mod})')
+            self._engine_mode_label.setStyleSheet(
+                'font-weight: bold; color: #4CAF50; padding: 2px 8px;'
+                'background: #E8F5E9; border-radius: 3px;')
+        else:
+            self._engine_mode_label.setText(f'Engine: SPICE ({mod})')
+            self._engine_mode_label.setStyleSheet(
+                'font-weight: bold; color: #2196F3; padding: 2px 8px;'
+                'background: #E3F2FD; border-radius: 3px;')
 
     def set_ltspice_runner(self, runner: LTSpiceRunner):
         """Update LTspice runner (e.g. after user sets a new path)."""
@@ -298,45 +319,104 @@ class SimulationEngineTab(QWidget):
         for ax in axes:
             ax.clear()
 
-        # Try to show TX waveform
+        # Check if Python engine result is available for TX/Channel
+        rx_res = results.get('RX')
+        py_result = (rx_res.outputs.get('python_result')
+                     if rx_res and rx_res.status == 'done' else None)
+
+        # TX waveform
         tx_result = results.get('TX')
         if tx_result and tx_result.status == 'done':
             try:
-                pwl_path = tx_result.outputs.get('P_tx_pwl')
-                if pwl_path:
-                    data = np.loadtxt(pwl_path, comments=';')
-                    t_ms = data[:, 0] * 1e3
-                    p_mw = data[:, 1] * 1e3
+                if py_result and 'P_tx' in py_result:
+                    t_ms = py_result['time'] * 1e3
+                    p_mw = py_result['P_tx'] * 1e3
                     axes[0].plot(t_ms, p_mw, 'b-', linewidth=0.5)
                     axes[0].set_title('TX: P_tx(t)', fontsize=9)
                     axes[0].set_ylabel('mW', fontsize=8)
                     axes[0].grid(True, alpha=0.3)
+                else:
+                    pwl_path = tx_result.outputs.get('P_tx_pwl')
+                    if pwl_path:
+                        data = np.loadtxt(pwl_path, comments=';')
+                        t_ms = data[:, 0] * 1e3
+                        p_mw = data[:, 1] * 1e3
+                        axes[0].plot(t_ms, p_mw, 'b-', linewidth=0.5)
+                        axes[0].set_title('TX: P_tx(t)', fontsize=9)
+                        axes[0].set_ylabel('mW', fontsize=8)
+                        axes[0].grid(True, alpha=0.3)
             except Exception:
                 axes[0].text(0.5, 0.5, 'TX data not available',
                              ha='center', va='center', transform=axes[0].transAxes)
 
-        # Channel info
+        # Channel / I_ph
         ch_result = results.get('Channel')
         if ch_result and ch_result.status == 'done':
             try:
-                pwl_path = ch_result.outputs.get('optical_pwl')
-                if pwl_path:
-                    data = np.loadtxt(pwl_path, comments=';')
-                    t_ms = data[:, 0] * 1e3
-                    i_ua = data[:, 1] * 1e6
+                if py_result and 'I_ph' in py_result:
+                    t_ms = py_result['time'] * 1e3
+                    i_ua = py_result['I_ph'] * 1e6
                     axes[1].plot(t_ms, i_ua, 'g-', linewidth=0.5)
                     axes[1].set_title('Channel: I_ph(t)', fontsize=9)
                     axes[1].set_ylabel('uA', fontsize=8)
                     axes[1].grid(True, alpha=0.3)
+                else:
+                    pwl_path = ch_result.outputs.get('optical_pwl')
+                    if pwl_path:
+                        data = np.loadtxt(pwl_path, comments=';')
+                        t_ms = data[:, 0] * 1e3
+                        i_ua = data[:, 1] * 1e6
+                        axes[1].plot(t_ms, i_ua, 'g-', linewidth=0.5)
+                        axes[1].set_title('Channel: I_ph(t)', fontsize=9)
+                        axes[1].set_ylabel('uA', fontsize=8)
+                        axes[1].grid(True, alpha=0.3)
             except Exception:
                 axes[1].text(0.5, 0.5, 'Channel data not available',
                              ha='center', va='center', transform=axes[1].transAxes)
 
-        # RX results from .raw file
+        # RX results from .raw file or Python engine
         rx = results.get('RX')
         if rx and rx.status == 'done':
+            python_result = rx.outputs.get('python_result')
             raw_path = rx.outputs.get('raw_file')
-            if raw_path:
+
+            if python_result:
+                # Python engine: plot from in-memory arrays
+                try:
+                    t_ms = python_result['time'] * 1e3
+                    V_rx = python_result['V_rx']
+
+                    # Panel 3: Received signal
+                    axes[2].plot(t_ms, V_rx * 1e3, 'g-', linewidth=0.3)
+                    axes[2].set_title('RX: V_rx(t)', fontsize=9)
+                    axes[2].set_ylabel('mV', fontsize=8)
+                    axes[2].grid(True, alpha=0.3)
+
+                    # Panel 4: BER info text
+                    ber = python_result['ber']
+                    snr = python_result['snr_est_dB']
+                    mod = python_result['modulation']
+                    info_text = (
+                        f"Engine: Python\n"
+                        f"Modulation: {mod}\n"
+                        f"BER: {ber:.4e}\n"
+                        f"Errors: {python_result['n_errors']}/{python_result['n_bits_tested']}\n"
+                        f"SNR est: {snr:.1f} dB\n"
+                        f"P_rx avg: {python_result['P_rx_avg_uW']:.2f} uW"
+                    )
+                    axes[3].text(0.1, 0.5, info_text,
+                                 ha='left', va='center', transform=axes[3].transAxes,
+                                 fontsize=9, fontfamily='monospace',
+                                 bbox=dict(boxstyle='round', facecolor='lightyellow'))
+                    axes[3].set_title('Results Summary', fontsize=9)
+                    axes[3].set_axis_off()
+                except Exception as e:
+                    for i in [2, 3]:
+                        axes[i].text(0.5, 0.5, f'Python result error: {e}',
+                                     ha='center', va='center', transform=axes[i].transAxes)
+
+            elif raw_path:
+                # SPICE engine: parse .raw file
                 try:
                     from cosim.raw_parser import LTSpiceRawParser
                     parser = LTSpiceRawParser(raw_path)

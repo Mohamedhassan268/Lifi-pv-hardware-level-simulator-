@@ -1,0 +1,73 @@
+{
+  "preset_name": "sarwar2017",
+  "paper_reference": "Sarwar et al., ICOCN 2017 - Visible Light Communication Using a Solar-Panel Receiver",
+
+  "simulation_engine": "python",
+  "modulation": "OFDM",
+
+  "led_part": "Blue LED 3W",
+  "driver_part": "Generic",
+  "bias_current_A": 1.0,
+  "modulation_depth": 0.5,
+  "led_radiated_power_mW": 3000.0,
+  "led_half_angle_deg": 30.0,
+  "led_driver_re": 5.0,
+  "led_gled": 0.50,
+  "lens_transmittance": 1.0,
+
+  "distance_m": 2.0,
+  "tx_angle_deg": 0.0,
+  "rx_tilt_deg": 0.0,
+
+  "pv_part": "Si Solar Panel 7.5cm2",
+  "sc_area_cm2": 7.5,
+  "sc_responsivity": 0.40,
+  "sc_cj_nF": 0.1,
+  "sc_rsh_kOhm": 10.0,
+  "sc_iph_uA": 0.0,
+  "sc_vmpp_mV": 0.0,
+  "sc_impp_uA": 0.0,
+  "sc_pmpp_uW": 0.0,
+
+  "r_sense_ohm": 50.0,
+  "ina_part": "N/A",
+  "ina_gain_dB": 0.0,
+  "ina_gbw_kHz": 0.0,
+  "comparator_part": "N/A",
+
+  "bpf_stages": 0,
+  "bpf_f_low_Hz": 0.0,
+  "bpf_f_high_Hz": 5000000.0,
+  "bpf_rhp": 0.0,
+  "bpf_chp_pF": 0.0,
+  "bpf_rlp": 0.0,
+  "bpf_clf_nF": 0.0,
+
+  "dcdc_fsw_kHz": 0.0,
+  "dcdc_l_uH": 0.0,
+  "dcdc_cp_uF": 0.0,
+  "dcdc_cl_uF": 0.0,
+  "r_load_ohm": 50.0,
+
+  "t_stop_s": 0.001,
+  "data_rate_bps": 15030000.0,
+  "prbs_order": 7,
+  "n_bits": 10000,
+
+  "ofdm_nfft": 256,
+  "ofdm_qam_order": 16,
+  "ofdm_n_subcarriers": 80,
+  "ofdm_cp_len": 32,
+  "ofdm_sample_rate_hz": 15000000.0,
+
+  "temperature_K": 300.0,
+
+  "noise_enable": true,
+  "ina_noise_nV_rtHz": 0.0,
+  "shot_noise_enable": true,
+  "thermal_noise_enable": true,
+
+  "target_ber": 0.0016883,
+  "target_data_rate_mbps": 15.03,
+  "target_fec_threshold": 0.0038
+}

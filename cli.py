@@ -190,6 +190,9 @@ def cmd_gui(args):
     app.setStyle('Fusion')
     window = MainWindow()
     window.show()
+    window.raise_()
+    window.activateWindow()
+    print("  GUI window opened. Close the window to exit.")
     sys.exit(app.exec())
 
 

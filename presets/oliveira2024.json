@@ -1,0 +1,73 @@
+{
+  "preset_name": "oliveira2024",
+  "paper_reference": "Oliveira et al., Light: Science & Applications 2024 - Reconfigurable MIMO-based self-powered battery-less light communication system",
+
+  "simulation_engine": "python",
+  "modulation": "OFDM",
+
+  "led_part": "Red Laser 658nm",
+  "driver_part": "Generic",
+  "bias_current_A": 0.5,
+  "modulation_depth": 0.5,
+  "led_radiated_power_mW": 100.0,
+  "led_half_angle_deg": 10.0,
+  "led_driver_re": 5.0,
+  "led_gled": 0.90,
+  "lens_transmittance": 1.0,
+
+  "distance_m": 0.5,
+  "tx_angle_deg": 0.0,
+  "rx_tilt_deg": 0.0,
+
+  "pv_part": "PDBC171SM 3x3 Array",
+  "sc_area_cm2": 0.693,
+  "sc_responsivity": 0.36,
+  "sc_cj_nF": 1.0,
+  "sc_rsh_kOhm": 50.0,
+  "sc_iph_uA": 0.0,
+  "sc_vmpp_mV": 0.0,
+  "sc_impp_uA": 0.0,
+  "sc_pmpp_uW": 0.0,
+
+  "r_sense_ohm": 50.0,
+  "ina_part": "N/A",
+  "ina_gain_dB": 0.0,
+  "ina_gbw_kHz": 0.0,
+  "comparator_part": "N/A",
+
+  "bpf_stages": 0,
+  "bpf_f_low_Hz": 15000.0,
+  "bpf_f_high_Hz": 1500000.0,
+  "bpf_rhp": 0.0,
+  "bpf_chp_pF": 0.0,
+  "bpf_rlp": 0.0,
+  "bpf_clf_nF": 0.0,
+
+  "dcdc_fsw_kHz": 0.0,
+  "dcdc_l_uH": 0.0,
+  "dcdc_cp_uF": 0.0,
+  "dcdc_cl_uF": 0.0,
+  "r_load_ohm": 50.0,
+
+  "t_stop_s": 0.001,
+  "data_rate_bps": 25700000.0,
+  "prbs_order": 7,
+  "n_bits": 25700,
+
+  "ofdm_nfft": 1024,
+  "ofdm_qam_order": 64,
+  "ofdm_n_subcarriers": 500,
+  "ofdm_cp_len": 10,
+  "ofdm_sample_rate_hz": 12020000.0,
+
+  "temperature_K": 300.0,
+
+  "noise_enable": true,
+  "ina_noise_nV_rtHz": 0.0,
+  "shot_noise_enable": true,
+  "thermal_noise_enable": true,
+
+  "target_ber": 0.0034,
+  "target_data_rate_mbps": 21.3,
+  "target_fec_threshold": 0.0038
+}

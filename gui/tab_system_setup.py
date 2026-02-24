@@ -198,7 +198,62 @@ class SystemSetupTab(QWidget):
             'into the SPICE simulation for realistic BER')
         sim_form.addRow('Noise:', self._noise_enable)
 
+        # Engine indicator
+        self._engine_label = QLabel('SPICE')
+        self._engine_label.setStyleSheet(
+            'font-weight: bold; color: #2196F3; padding: 2px 6px;'
+            'background: #E3F2FD; border-radius: 3px;')
+        sim_form.addRow('Engine:', self._engine_label)
+
+        # Modulation type display
+        self._modulation_label = QLabel('OOK')
+        self._modulation_label.setStyleSheet(
+            'font-weight: bold; padding: 2px 6px;')
+        sim_form.addRow('Modulation:', self._modulation_label)
+
         right_layout.addWidget(sim_grp)
+
+        # Paper-specific parameters group (shows/hides based on modulation)
+        self._paper_grp = QGroupBox('Paper-Specific Parameters')
+        paper_form = QFormLayout(self._paper_grp)
+
+        self._humidity = QDoubleSpinBox()
+        self._humidity.setRange(0.0, 1.0)
+        self._humidity.setSingleStep(0.05)
+        self._humidity.setDecimals(2)
+        self._humidity.setSpecialValueText('(disabled)')
+        paper_form.addRow('Humidity RH:', self._humidity)
+
+        self._ofdm_nfft = QSpinBox()
+        self._ofdm_nfft.setRange(16, 4096)
+        paper_form.addRow('OFDM FFT:', self._ofdm_nfft)
+
+        self._ofdm_qam = QSpinBox()
+        self._ofdm_qam.setRange(2, 256)
+        paper_form.addRow('QAM Order:', self._ofdm_qam)
+
+        self._bfsk_f0 = QDoubleSpinBox()
+        self._bfsk_f0.setRange(100, 50000)
+        self._bfsk_f0.setSuffix(' Hz')
+        paper_form.addRow('BFSK f0:', self._bfsk_f0)
+
+        self._bfsk_f1 = QDoubleSpinBox()
+        self._bfsk_f1.setRange(100, 50000)
+        self._bfsk_f1.setSuffix(' Hz')
+        paper_form.addRow('BFSK f1:', self._bfsk_f1)
+
+        self._notch_freq = QDoubleSpinBox()
+        self._notch_freq.setRange(0, 1000)
+        self._notch_freq.setSuffix(' Hz')
+        self._notch_freq.setSpecialValueText('(disabled)')
+        paper_form.addRow('Notch Filter:', self._notch_freq)
+
+        self._amp_gain = QDoubleSpinBox()
+        self._amp_gain.setRange(1.0, 1000.0)
+        self._amp_gain.setDecimals(1)
+        paper_form.addRow('Amp Gain:', self._amp_gain)
+
+        right_layout.addWidget(self._paper_grp)
         right_layout.addStretch()
 
         splitter.addWidget(left)
@@ -213,10 +268,13 @@ class SystemSetupTab(QWidget):
         for spin in [self._mod_depth, self._led_power, self._half_angle,
                       self._distance, self._tx_angle, self._rx_tilt,
                       self._lens_t, self._r_sense, self._dcdc_fsw,
-                      self._data_rate, self._t_stop]:
+                      self._data_rate, self._t_stop,
+                      self._humidity, self._bfsk_f0, self._bfsk_f1,
+                      self._notch_freq, self._amp_gain]:
             spin.valueChanged.connect(self._on_value_changed)
-        self._bpf_stages.valueChanged.connect(self._on_value_changed)
-        self._n_bits.valueChanged.connect(self._on_value_changed)
+        for ispin in [self._bpf_stages, self._n_bits,
+                       self._ofdm_nfft, self._ofdm_qam]:
+            ispin.valueChanged.connect(self._on_value_changed)
         self._noise_enable.stateChanged.connect(self._on_value_changed)
 
     def _load_config_to_ui(self):
@@ -246,6 +304,32 @@ class SystemSetupTab(QWidget):
         self._n_bits.setValue(c.n_bits)
         self._t_stop.setValue(c.t_stop_s)
         self._noise_enable.setChecked(c.noise_enable)
+
+        # Engine and modulation indicators
+        engine = getattr(c, 'simulation_engine', 'spice')
+        self._engine_label.setText(engine.upper())
+        if engine == 'python':
+            self._engine_label.setStyleSheet(
+                'font-weight: bold; color: #4CAF50; padding: 2px 6px;'
+                'background: #E8F5E9; border-radius: 3px;')
+        else:
+            self._engine_label.setStyleSheet(
+                'font-weight: bold; color: #2196F3; padding: 2px 6px;'
+                'background: #E3F2FD; border-radius: 3px;')
+        self._modulation_label.setText(getattr(c, 'modulation', 'OOK'))
+
+        # Paper-specific fields
+        self._humidity.setValue(c.humidity_rh if c.humidity_rh is not None else 0.0)
+        self._ofdm_nfft.setValue(getattr(c, 'ofdm_nfft', 256))
+        self._ofdm_qam.setValue(getattr(c, 'ofdm_qam_order', 16))
+        self._bfsk_f0.setValue(getattr(c, 'bfsk_f0_hz', 1600))
+        self._bfsk_f1.setValue(getattr(c, 'bfsk_f1_hz', 2000))
+        self._notch_freq.setValue(c.notch_freq_hz if c.notch_freq_hz is not None else 0.0)
+        self._amp_gain.setValue(getattr(c, 'amp_gain_linear', 1.0))
+
+        # Show/hide paper-specific group based on modulation
+        mod = getattr(c, 'modulation', 'OOK').upper()
+        self._paper_grp.setVisible(mod != 'OOK' or engine == 'python')
 
         if c.preset_name:
             self._set_combo(self._preset_combo, c.preset_name)
@@ -283,6 +367,17 @@ class SystemSetupTab(QWidget):
         c.n_bits = self._n_bits.value()
         c.t_stop_s = self._t_stop.value()
         c.noise_enable = self._noise_enable.isChecked()
+
+        # Paper-specific fields
+        humidity_val = self._humidity.value()
+        c.humidity_rh = humidity_val if humidity_val > 0 else None
+        c.ofdm_nfft = self._ofdm_nfft.value()
+        c.ofdm_qam_order = self._ofdm_qam.value()
+        c.bfsk_f0_hz = self._bfsk_f0.value()
+        c.bfsk_f1_hz = self._bfsk_f1.value()
+        notch_val = self._notch_freq.value()
+        c.notch_freq_hz = notch_val if notch_val > 0 else None
+        c.amp_gain_linear = self._amp_gain.value()
 
     def _on_value_changed(self, *args):
         if self._building:

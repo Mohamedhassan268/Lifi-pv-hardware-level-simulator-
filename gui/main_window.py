@@ -60,6 +60,20 @@ class MainWindow(QMainWindow):
         self._build_status_bar()
         self._connect_signals()
 
+        # Center on screen and ensure window comes to foreground
+        self._center_on_screen()
+
+    def _center_on_screen(self):
+        """Center the window on the primary screen and raise to foreground."""
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            x = (geo.width() - self.width()) // 2 + geo.x()
+            y = (geo.height() - self.height()) // 2 + geo.y()
+            self.move(x, y)
+        self.raise_()
+        self.activateWindow()
+
     def _build_menu(self):
         menubar = self.menuBar()
 
