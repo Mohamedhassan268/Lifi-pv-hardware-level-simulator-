@@ -15,55 +15,13 @@ Usage:
     ok = runner.run_transient('circuit.cir', timeout_s=120)
 """
 
-import os
-import sys
 import subprocess
 import time as _time
 from pathlib import Path
 from typing import Optional, List
 
-
-# Common install locations for LTspice on Windows
-_LTSPICE_SEARCH_PATHS = [
-    # LTspice XVII (older)
-    r'C:\Program Files\LTC\LTspiceXVII\XVIIx64.exe',
-    r'C:\Program Files (x86)\LTC\LTspiceXVII\XVIIx86.exe',
-    # LTspice 24 (new Analog Devices release)
-    r'C:\Program Files\ADI\LTspice\LTspice.exe',
-    # User-local installs
-    os.path.expandvars(r'%LOCALAPPDATA%\Programs\ADI\LTspice\LTspice.exe'),
-    os.path.expandvars(r'%LOCALAPPDATA%\LTspice\LTspice.exe'),
-    # AppData
-    os.path.expandvars(r'%APPDATA%\LTspice\LTspice.exe'),
-    os.path.expandvars(r'%USERPROFILE%\AppData\Local\Programs\ADI\LTspice\LTspice.exe'),
-]
-
-
-def find_ltspice() -> Optional[str]:
-    """
-    Auto-detect LTspice executable on Windows.
-
-    Searches common installation paths.
-
-    Returns:
-        Path to LTspice executable, or None if not found.
-    """
-    if sys.platform != 'win32':
-        return None
-
-    for path_str in _LTSPICE_SEARCH_PATHS:
-        p = Path(path_str)
-        if p.exists():
-            return str(p)
-
-    # Try searching PATH
-    import shutil
-    for name in ['LTspice.exe', 'XVIIx64.exe']:
-        found = shutil.which(name)
-        if found:
-            return found
-
-    return None
+# Delegate discovery to centralized spice_finder module
+from .spice_finder import find_ltspice
 
 
 class LTSpiceRunner:

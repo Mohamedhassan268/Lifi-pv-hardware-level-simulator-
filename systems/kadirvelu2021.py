@@ -439,9 +439,10 @@ class KadirveluSimulation:
         self.params = KadirveluParams()
         self.netlist_gen = KadirveluNetlist(self.params)
         
-        # Default ngspice path
+        # Auto-detect ngspice via centralized finder
         if ngspice_path is None:
-            ngspice_path = r"C:\Users\HP OMEN\OneDrive\Desktop\gradproject\components level sim\hardware_faithful_simulator\hardware_faithful_simulator\ngspice-45.2_64\Spice64\bin\ngspice.exe"
+            from cosim.spice_finder import find_ngspice
+            ngspice_path = find_ngspice()
         self.ngspice_path = ngspice_path
         
         self.results = {}

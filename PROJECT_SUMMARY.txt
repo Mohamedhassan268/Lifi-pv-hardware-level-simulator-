@@ -1,0 +1,579 @@
+================================================================================
+   HARDWARE-FAITHFUL LiFi-PV SIMULATOR — PROJECT SUMMARY
+================================================================================
+
+   A component-level, hardware-faithful simulator for LiFi-PV (Light Fidelity
+   over Photovoltaic) systems. Validated against 6 published research papers.
+
+   GitHub: https://github.com/Mohamedhassan268/Lifi-pv-hardware-level-simulator-
+
+================================================================================
+   TABLE OF CONTENTS
+================================================================================
+
+   1.  Project Overview
+   2.  Directory Structure
+   3.  Component Library
+   4.  Physics & Materials Engine
+   5.  SPICE Co-Simulation Pipeline
+   6.  Paper Presets & System Configurations
+   7.  Paper Validation & Figure Generation
+   8.  GUI Application
+   9.  CLI Commands
+   10. Test Suite
+   11. Key Technical Details
+   12. How to Run
+
+================================================================================
+   1. PROJECT OVERVIEW
+================================================================================
+
+This simulator models a complete LiFi-PV (Simultaneous Lightwave Information
+and Power Transfer — SLIPT) system at the component level. It faithfully
+reproduces the analog signal chain from LED transmitter to solar cell receiver,
+including:
+
+   - LED transmitter with driver circuit (ADA4891 op-amp + BSD235N MOSFET)
+   - Lambertian optical channel with geometry-aware path loss
+   - Solar cell photovoltaic receiver (KXOB25-04X3F GaAs)
+   - Instrumentation amplifier (INA322, configurable gain)
+   - 2-stage active band-pass filter (TLV2379, 700 Hz - 10 kHz)
+   - Comparator for data recovery (TLV7011)
+   - Boost DC-DC converter for energy harvesting
+   - OOK / Manchester / OFDM / BFSK / PWM-ASK modulation support
+
+The system supports two simulation engines:
+   - SPICE engine: LTspice/ngspice for full analog transient simulation
+   - Python engine: System-level simulation for OFDM/BFSK/MIMO papers
+
+Validated against 6 published papers with 23 reproducible figures.
+
+================================================================================
+   2. DIRECTORY STRUCTURE
+================================================================================
+
+hardware_faithful_simulator/
+|
+|-- cli.py                    Main CLI entry point (14 commands)
+|-- demo.py                   Quick demo script
+|-- test_all.py               Master test runner
+|
+|-- components/               Component library (14 components)
+|   |-- __init__.py           Registry (COMPONENT_REGISTRY)
+|   |-- base.py               Abstract base classes
+|   |-- solar_cells.py        KXOB25-04X3F (GaAs), SM141K
+|   |-- photodiodes.py        BPW34, SFH206K, VEMD5510
+|   |-- leds.py               LXM5-PD01 (Lumileds Luxeon)
+|   |-- amplifiers.py         INA322, ADA4891, TLV2379
+|   |-- comparators.py        TLV7011
+|   |-- mosfets.py            BSD235N, NTS4409
+|
+|-- physics/                  Physics-level models
+|   |-- pn_junction.py        PN junction IV, Shockley diode
+|   |-- photodetection.py     Responsivity, photocurrent, shot noise
+|   |-- led_emission.py       LED spectral emission, Lambertian pattern
+|   |-- physics_noise.py      6-source noise model (shot, thermal, ambient,
+|   |                         amplifier, ADC quantization, processing)
+|   |-- physics_tia.py        Transimpedance amplifier model
+|
+|-- materials/                Semiconductor material properties
+|   |-- __init__.py
+|   |-- properties.py         Bandgap, absorption, refractive index
+|   |-- semiconductors.py     GaAs, Si, InGaP material data
+|   |-- reference_data.py     Published measurement data
+|
+|-- systems/                  Paper-specific system definitions
+|   |-- __init__.py
+|   |-- kadirvelu2021.py      KadirveluParams — all paper parameters
+|   |-- kadirvelu2021_channel.py   Optical channel model
+|   |-- kadirvelu2021_netlist.py   SPICE netlist generator
+|   |-- kadirvelu2021_schematic.py SchemDraw circuit diagrams (8 schematics)
+|
+|-- cosim/                    Co-simulation engine
+|   |-- __init__.py
+|   |-- system_config.py      SystemConfig dataclass + JSON preset loader
+|   |-- pipeline.py           TX->Channel->RX pipeline orchestrator
+|   |-- python_engine.py      Python system-level simulation engine
+|   |-- ltspice_runner.py     LTspice subprocess runner
+|   |-- pwl_writer.py         PWL (piecewise-linear) stimulus writer
+|   |-- raw_parser.py         LTspice .raw binary file parser
+|   |-- session.py            Simulation session/workspace manager
+|
+|-- papers/                   Paper validation & figure generation
+|   |-- __init__.py           Registry: PAPERS dict, run_paper(), run_all_papers()
+|   |-- ofdm_modem.py         Self-contained OFDM engine (Gray-coded M-QAM)
+|   |-- kadirvelu_2021.py     5 figures — transfer funcs, BER, frequency response
+|   |-- correa_2025.py        3 figures — humidity model, power/BER vs distance
+|   |-- gonzalez_2024.py      3 figures — Vpp vs load, Manchester waveforms
+|   |-- sarwar_2017.py        4 figures — OFDM BER, EVM, spectrum, constellation
+|   |-- oliveira_2024.py      3 figures — adaptive QAM, bit allocation, SNR profile
+|   |-- xu_2024.py            5 figures — charging, Pareto, PSR, LC shutter
+|
+|-- presets/                  JSON configuration presets (7 papers)
+|   |-- kadirvelu2021.json
+|   |-- correa2025.json
+|   |-- gonzalez2024.json
+|   |-- sarwar2017.json
+|   |-- oliveira2024.json
+|   |-- xu2024.json
+|   |-- fakidis2020.json
+|
+|-- gui/                      PyQt6 desktop GUI (7 tabs)
+|   |-- __init__.py
+|   |-- main_window.py        MainWindow (7 tabs, toolbar, status bar)
+|   |-- widgets.py            MplCanvas, StatusIndicator, QuickInfoPanel
+|   |-- tab_system_setup.py   Tab 1: System parameters & preset loading
+|   |-- tab_component_library.py  Tab 2: Component browser with circuit symbols
+|   |-- tab_channel_config.py Tab 3: Optical channel geometry
+|   |-- tab_simulation_engine.py  Tab 4: Run simulations
+|   |-- tab_results.py        Tab 5: Waveform viewer & analysis
+|   |-- tab_schematics.py     Tab 6: SchemDraw circuit diagrams
+|   |-- tab_validation.py     Tab 7: Paper validation + figure generation
+|
+|-- simulation/               Simulation utilities
+|   |-- __init__.py
+|   |-- ngspice_runner.py     ngspice subprocess runner
+|   |-- analysis.py           BER computation, SNR analysis
+|   |-- prbs_generator.py     PRBS-7/15/31 sequence generator
+|
+|-- spice_parser/             SPICE netlist parser
+|   |-- parser.py             Tokenizer + AST parser
+|   |-- models.py             Circuit, Element, SubCircuit classes
+|   |-- loader.py             File loader + .lib/.inc resolution
+|
+|-- spice_models/             SPICE component models
+|-- spice_libs/               SPICE library files
+|
+|-- budget/                   Link budget integration
+|   |-- integration_main_component.py
+|   |-- integration_spice_export.py
+|   |-- integration_thermal_sweep.py
+|
+|-- integration/              External tool integration
+|   |-- integration_adapter.py
+|
+|-- schematics/               Pre-generated SVG schematics (8 files)
+|   |-- kadirvelu2021_full_system.svg
+|   |-- kadirvelu2021_solar_cell.svg
+|   |-- kadirvelu2021_ina322.svg
+|   |-- kadirvelu2021_bpf.svg
+|   |-- kadirvelu2021_comparator.svg
+|   |-- kadirvelu2021_dcdc.svg
+|   |-- kadirvelu2021_tx_driver.svg
+|   |-- kadirvelu2021_channel.svg
+|
+|-- tests/                    Test suite (133 tests)
+|   |-- test_suite.py         Core component + physics tests
+|   |-- test_paper_validation.py  Paper-specific validation tests
+|
+|-- workspace/                Simulation session outputs
+|-- ngspice-45.2_64/          Bundled ngspice binary (Windows)
+|-- venv/                     Python virtual environment
+
+================================================================================
+   3. COMPONENT LIBRARY
+================================================================================
+
+14 registered components across 6 categories, each with full datasheet specs:
+
+SOLAR CELLS (PhotodetectorBase):
+   - KXOB25-04X3F (GaAs)   R=0.36 A/W, Area=15.2mm^2, Voc=2.26V
+   - SM141K (a-Si)          R=0.22 A/W, Area=50mm^2
+
+PHOTODIODES (PhotodetectorBase):
+   - BPW34                  R=0.62 A/W @ 900nm, Si PIN
+   - SFH206K                R=0.55 A/W @ 850nm, Si PIN
+   - VEMD5510               R=0.45 A/W @ 570nm, Si PIN (visible)
+
+LEDs (LEDBase):
+   - LXM5-PD01              Luxeon, 530nm, P_radiated=9.3mW
+
+AMPLIFIERS (AmplifierBase):
+   - INA322                  Instrumentation amp, GBW=500kHz, G=5-105x
+   - ADA4891                 Op-amp, GBW=220MHz, rail-to-rail
+   - TLV2379                 Quad op-amp, GBW=710kHz, micro-power
+
+COMPARATORS (ComparatorBase):
+   - TLV7011                 260ns propagation, 335nA quiescent, push-pull
+
+MOSFETs (MOSFETBase):
+   - BSD235N                 N-ch, Vds=30V, Rds_on=0.27 Ohm
+   - NTS4409                 N-ch, Vds=30V, Rds_on=0.12 Ohm
+
+Each component provides:
+   - .spice_model()     SPICE subcircuit definition
+   - .datasheet_url     Link to manufacturer datasheet
+   - Full electrical parameters (capacitances, resistances, gains, etc.)
+
+================================================================================
+   4. PHYSICS & MATERIALS ENGINE
+================================================================================
+
+PN Junction (physics/pn_junction.py):
+   - Shockley diode equation with ideality factor
+   - Forward/reverse IV characteristics
+   - Junction capacitance model (depletion + diffusion)
+
+Photodetection (physics/photodetection.py):
+   - Spectral responsivity R(lambda) = eta * q * lambda / (h * c)
+   - Photocurrent: I_ph = R * P_optical * A_detector
+   - Shot noise: i_shot = sqrt(2 * q * I_ph * BW)
+   - Dark current model
+
+LED Emission (physics/led_emission.py):
+   - Lambertian emission pattern: I(theta) = I_0 * cos^m(theta)
+   - Lambertian order: m = -ln(2) / ln(cos(theta_half))
+   - Spectral power density
+   - CIE chromaticity coordinates
+
+Noise Model (physics/physics_noise.py) — 6-source model:
+   1. Shot noise: sigma_shot = sqrt(2*q*(I_ph + I_dark)*BW)
+   2. Thermal noise: sigma_th = sqrt(4*k*T*BW/R)
+   3. Ambient light noise: sigma_amb (proportional to background illuminance)
+   4. Amplifier noise: sigma_amp (input-referred, from INA322 specs)
+   5. ADC quantization: sigma_q = V_ref / (sqrt(12) * 2^N)
+   6. Processing noise: sigma_proc (digital processing floor)
+   Total: sigma_total = sqrt(sum of squares)
+
+Materials (materials/):
+   - GaAs: Eg=1.424eV, mu_e=8500 cm^2/Vs, alpha coefficients
+   - Silicon: Eg=1.12eV, absorption coefficient vs wavelength
+   - InGaP: Eg=1.86eV, lattice-matched to GaAs
+
+================================================================================
+   5. SPICE CO-SIMULATION PIPELINE
+================================================================================
+
+The pipeline (cosim/pipeline.py) orchestrates a full TX -> Channel -> RX
+simulation in configurable steps:
+
+   Step 1 — TX:
+      Generate OOK-modulated PRBS bit stream
+      Create PWL stimulus file for LED driver circuit
+      Run LTspice/ngspice transient for TX stage
+
+   Step 2 — Channel:
+      Apply Lambertian optical channel gain:
+        G_op = (m+1)/(2*pi*r^2) * cos^m(theta) * cos(beta) * A_rx * T_filter
+      Compute received optical power and photocurrent
+      Add distance-dependent attenuation
+
+   Step 3 — RX:
+      Generate photocurrent stimulus from channel output
+      Run SPICE for: Solar cell -> R_sense -> INA322 -> BPF -> Comparator
+      Extract waveforms from .raw binary output
+      Compute BER by comparing recovered bits to transmitted PRBS
+
+Dual-engine dispatch:
+   - SPICE engine: Used for OOK-compatible papers (kadirvelu2021, gonzalez2024)
+   - Python engine: Used for OFDM/BFSK/MIMO papers (sarwar2017, oliveira2024,
+     xu2024, correa2025) — runs system-level simulation without requiring SPICE
+
+Session management (cosim/session.py):
+   - Creates timestamped workspace directories
+   - Saves config JSON, netlist, PWL stimulus, .raw output, analysis plots
+   - Supports session replay and comparison
+
+================================================================================
+   6. PAPER PRESETS & SYSTEM CONFIGURATIONS
+================================================================================
+
+SystemConfig (cosim/system_config.py) is a Python dataclass with 40+ fields
+covering every paper's parameters. Presets are stored as JSON in presets/.
+
+7 Paper Presets:
+
+1. kadirvelu2021 — Kadirvelu et al., IEEE TGCN 2021
+   "A Circuit for Simultaneous Reception of Data and Power Using a Solar Cell"
+   - OOK modulation, 5 kbps, Manchester encoding
+   - KXOB25-04X3F solar cell, INA322 amp, 2-stage BPF, TLV7011 comparator
+   - Boost DC-DC (50 kHz, 67% efficiency)
+   - Target: P_harvest=223 uW, BER=1.008e-3
+   - Distance: 32.5 cm
+
+2. correa2025 — Correa-Morales et al., Scientific Reports 2025
+   "Solar panel-based VLC for greenhouse applications"
+   - PWM-ASK modulation, 1 kbps
+   - Beer-Lambert humidity attenuation model
+   - 6-source noise model
+   - Distance: 1-5 meters, 6 humidity levels (30%-80% RH)
+
+3. gonzalez2024 — Gonzalez-Uriarte et al., IEEE LATINCOM 2024
+   "Design and Implementation of a Low-Cost VLC PV Panel-Based Receiver"
+   - OOK Manchester, 4.8 kbaud
+   - SM141K solar cell, Twin-T notch filter (50/60 Hz rejection)
+   - Target BW: 50 kHz at 220 Ohm load
+   - Low-cost focus: total BOM < $15
+
+4. sarwar2017 — Sarwar et al., ICOCN 2017
+   "Visible Light Communication Using a Solar-Panel Receiver"
+   - DCO-OFDM, 16-QAM fixed, 80 subcarriers, 256-FFT
+   - Target: 15 Mbps, BER < 3.8e-3 (FEC threshold)
+   - Solar panel as both receiver and energy harvester
+
+5. oliveira2024 — Oliveira et al., Light: Science & Applications 2024
+   "Reconfigurable MIMO-based self-powered battery-less light communication"
+   - Adaptive OFDM, up to 64-QAM, 500 subcarriers, 1024-FFT
+   - SISO: 25.7 Mbps gross, 21.3 Mbps net
+   - MIMO (4-channel): 85.2 Mbps net
+   - 9 photodiodes in 3x3 array, reconfigurable
+
+6. xu2024 — Xu et al., EWSN 2024
+   "Sunlight-Duo: Exploiting Sunlight for Simultaneous Energy Harvesting
+   & Communication"
+   - BFSK modulation, 400 bps (non-coherent)
+   - Reconfigurable solar array: 2s-8p / 4s-4p / 8s-2p
+   - LC shutter (rise 1.34ms, fall 0.15ms)
+   - Supercap charging (1F, charges to 2.6V in ~2 min at 50 klux)
+   - PSR > 90% at 11m with lens
+
+7. fakidis2020 — Fakidis et al., IEEE JSAC 2020
+   "Indoor Optical Wireless Power Transfer to Small Cells at Nighttime"
+   - Optical wireless power transfer focus
+   - Power beacon + small cell receiver
+
+================================================================================
+   7. PAPER VALIDATION & FIGURE GENERATION
+================================================================================
+
+The papers/ module provides self-contained validation scripts for 6 papers.
+Each generates publication-quality figures matching the original paper results.
+
+Total: 23 figures generated across 6 papers. All 6 papers PASS validation.
+
+Kadirvelu 2021 (5 figures):
+   fig6_transfer_functions.png   — H_sense, H_INA, H_BPF, H_total
+   fig13_frequency_response.png  — System frequency response (100 Hz - 1 MHz)
+   fig15_vout_vs_duty.png        — DC-DC output voltage vs duty cycle
+   fig17_ber_vs_modulation.png   — BER vs modulation depth (10%-100%)
+   fig19_power_vs_bitrate.png    — Harvested power vs bit rate
+   Validation: P_harvest=232.5 uW (target 223, error 4.3%), BER matches
+
+Correa 2025 (3 figures):
+   fig6_power_vs_distance.png    — Received power vs distance, 6 humidity curves
+   fig7_ber_vs_distance.png      — BER vs distance at different RH
+   frequency_response.png        — PWM-ASK receiver frequency response
+   Model: alpha = 0.3 + 4.0*(RH-0.3)^1.5 (Beer-Lambert humidity)
+   Receiver BW: 14.5 kHz (target: 14 kHz)
+
+Gonzalez 2024 (3 figures):
+   fig3_vpp_vs_load.png          — Output Vpp vs load resistance (with paper data)
+   fig7_rx_tx_manchester.png     — TX/RX Manchester waveform comparison
+   gonzalez_validation_combined.png — 3-panel combined validation
+   BW @ 220 Ohm: 49.9 kHz (target: 50 kHz, error 0.1%)
+
+Sarwar 2017 (4 figures):
+   fig4_ber_subcarrier.png       — BER per subcarrier (80 subcarriers)
+   fig5_evm_subcarrier.png       — EVM per subcarrier
+   fig6_spectrum.png             — OFDM power spectral density (Welch method)
+   fig7_constellation.png        — 16-QAM constellation diagram
+   Data rate: 16.67 Mbps (target: 15.03), BER: 1.42e-3
+
+Oliveira 2024 (3 figures):
+   fig3c_subcarrier_analysis.png — SNR/BER/bits per subcarrier (3 panels)
+   fig3d_constellation.png       — Adaptive QAM constellation (mixed orders)
+   bit_allocation_map.png        — Color-coded adaptive bit allocation heatmap
+   SISO gross: 26.30 Mbps (target 25.7), net: 21.80 Mbps (target 21.3)
+   MIMO net: 87.19 Mbps (target 85.2), BER: 1.1e-4
+
+Xu 2024 (5 figures):
+   charging_curves.png           — Supercap voltage vs time (3 configurations)
+   pareto_frontiers.png          — Charging vs communication Pareto (10/50 klux)
+   psr_vs_distance.png           — Packet success rate vs distance (with/no lens)
+   lc_shutter_dynamics.png       — LC shutter rise/fall transient response
+   config_comparison.png         — Power and Voc bars at 4 light levels
+   Charging: 2.0 min to 2.6V, PSR@11m: 100%
+
+OFDM Modem Engine (papers/ofdm_modem.py):
+   Self-contained DCO-OFDM implementation:
+   - Gray-coded M-QAM mapping (BPSK through 64-QAM)
+   - Hermitian symmetry for real-valued time-domain signal
+   - Cyclic prefix insertion/removal
+   - Per-subcarrier Monte Carlo BER simulation
+   - Zero-forcing (ZF) equalization
+   - Adaptive bit allocation per SNR profile
+   - EVM and constellation extraction
+
+================================================================================
+   8. GUI APPLICATION
+================================================================================
+
+PyQt6 desktop application with 7 tabs, Fusion style, centered on screen.
+
+Launch: python cli.py gui
+
+Tab 1 — System Setup:
+   - Paper preset dropdown (7 presets)
+   - Editable system parameters (distance, angle, LED power, etc.)
+   - JSON import/export
+
+Tab 2 — Component Library:
+   - Browse 14 components across 6 categories
+   - Circuit schematic symbols drawn with matplotlib:
+     Solar Cells: diode + light arrows in circle
+     Photodiodes: diode with incoming arrows
+     LEDs: diode with outgoing red arrows
+     Amplifiers: op-amp triangle with +/- inputs
+     Comparators: triangle with digital output
+     MOSFETs: N-channel with G/D/S labels
+   - Full specs display for each component
+
+Tab 3 — Channel Configuration:
+   - Lambertian channel geometry visualization
+   - Distance, angle, area inputs
+   - Real-time link budget calculation
+
+Tab 4 — Simulation Engine:
+   - Select SPICE or Python engine
+   - Configure simulation parameters (tstop, bits, modulation)
+   - Run simulation with progress feedback
+   - Session workspace management
+
+Tab 5 — Results:
+   - Waveform viewer with matplotlib plots
+   - Time-domain, frequency-domain, eye diagram views
+   - BER, SNR, power measurements
+
+Tab 6 — Schematics:
+   - Dropdown: 8 circuit schematics
+     Full System, Solar Cell, INA322, BPF, Comparator,
+     DC-DC, LED Driver, Channel Model
+   - Generate with SchemDraw, display inline
+   - Export to PNG/SVG/PDF
+
+Tab 7 — Validation:
+   - Paper preset selector with validation table
+   - Parameter / Target / Simulated / Error% / Status columns
+   - Paper Figure Generation panel:
+     Select paper (or all), click "Generate Figures"
+     Runs in background thread, displays progress
+     Image list + preview panel for generated PNGs
+
+================================================================================
+   9. CLI COMMANDS
+================================================================================
+
+Usage: python cli.py <command> [options]
+
+   test          Run all 133 module self-tests
+   components    List/inspect registered components
+                 Usage: python cli.py components [name]
+   channel       Show optical channel link budget
+                 Usage: python cli.py channel [--sweep]
+   netlist       Generate SPICE netlist
+                 Usage: python cli.py netlist [--type full|rx|ook] [-o file]
+   params        Show paper parameters
+   simulate      Run ngspice transient simulation
+                 Usage: python cli.py simulate [--tstop 1e-3] [-o dir]
+   schematic     Generate SchemDraw circuit schematics (SVG/PNG/PDF)
+                 Usage: python cli.py schematic [-o dir] [--format svg]
+   ber           Show theoretical BER curve (OOK)
+   prbs          Generate PRBS-7/15/31 bit sequence
+                 Usage: python cli.py prbs [--order 7] [--bits 127]
+   gui           Launch PyQt6 desktop GUI
+   pipeline      Run TX->Channel->RX co-simulation pipeline
+                 Usage: python cli.py pipeline [--preset kadirvelu2021]
+   presets       List/inspect available presets
+                 Usage: python cli.py presets [name]
+   ltspice       Check LTspice installation status
+   validate      Run paper validation & generate figures
+                 Usage: python cli.py validate [paper] [--list] [-o dir]
+                 Examples:
+                   python cli.py validate --list
+                   python cli.py validate kadirvelu2021
+                   python cli.py validate              (all papers)
+
+================================================================================
+   10. TEST SUITE
+================================================================================
+
+133 tests covering all modules. Run with:
+   python -m pytest tests/ -v
+
+Test categories:
+   - Component registry and instantiation
+   - SPICE model generation for each component
+   - Physics model correctness (PN junction, photodetection, noise)
+   - Material properties (GaAs, Si bandgap, absorption)
+   - Channel model (Lambertian gain, link budget)
+   - SystemConfig preset loading and serialization
+   - Netlist generation and parsing
+   - PRBS generator (autocorrelation, balance)
+   - Pipeline stage execution
+   - Paper validation (BER/power/data-rate targets for all 6 papers)
+
+All 133 tests PASS.
+
+================================================================================
+   11. KEY TECHNICAL DETAILS
+================================================================================
+
+Optical Channel Model:
+   G_op = [(m+1) / (2*pi*r^2)] * cos^m(theta) * cos(beta) * A_rx * T_filter
+   where m = -ln(2) / ln(cos(theta_half))
+   Kadirvelu: G_op = 7.72e-2 at 32.5 cm, theta=0, beta=0
+
+Noise Budget (Kadirvelu 2021):
+   Shot noise:     0.127 mV_rms
+   Thermal noise:  0.042 mV_rms
+   Ambient noise:  0.013 mV_rms
+   Amplifier:      0.089 mV_rms
+   ADC quant:      0.003 mV_rms
+   Processing:     0.001 mV_rms
+   Total:          0.164 mV_rms (target: 0.160)
+
+BER Computation (OOK):
+   BER = 0.5 * erfc(SNR / sqrt(2))
+   With Manchester encoding: effective_BER = 1 - (1-BER)^2
+
+Data Rate Summary Across Papers:
+   Kadirvelu 2021:  5 kbps OOK Manchester
+   Gonzalez 2024:   4.8 kbaud OOK Manchester
+   Correa 2025:     1 kbps PWM-ASK
+   Xu 2024:         400 bps BFSK
+   Sarwar 2017:     15-17 Mbps DCO-OFDM 16-QAM
+   Oliveira 2024:   25.7 Mbps SISO / 85.2 Mbps MIMO (adaptive OFDM)
+
+Humidity Attenuation (Correa 2025):
+   alpha_humidity = 0.3 + 4.0 * (RH - 0.3)^1.5  [dB/m]
+   Applied via Beer-Lambert: P_rx = P_tx * exp(-alpha * d)
+
+Adaptive Bit Allocation (Oliveira 2024):
+   SNR >= 28 dB  ->  6 bits (64-QAM): 161 subcarriers
+   SNR >= 23 dB  ->  5 bits (32-QAM): 134 subcarriers
+   SNR >= 19 dB  ->  4 bits (16-QAM):  81 subcarriers
+   SNR >= 14 dB  ->  3 bits  (8-QAM):  68 subcarriers
+   SNR >= 11 dB  ->  2 bits  (QPSK):   42 subcarriers
+   SNR >=  8 dB  ->  1 bit   (BPSK):   14 subcarriers
+
+================================================================================
+   12. HOW TO RUN
+================================================================================
+
+Prerequisites:
+   Python 3.10+
+   pip install PyQt6 matplotlib numpy scipy schemdraw
+
+Quick Start:
+   cd hardware_faithful_simulator
+   python cli.py test                  # Run all tests (133 pass)
+   python cli.py gui                   # Launch desktop GUI
+   python cli.py validate --list       # List available papers
+   python cli.py validate              # Generate all 23 figures
+   python cli.py validate kadirvelu2021  # Single paper validation
+   python cli.py components            # Browse component library
+   python cli.py schematic             # Generate circuit diagrams
+   python cli.py pipeline --preset kadirvelu2021  # Full co-simulation
+
+Build Standalone Executable:
+   pip install pyinstaller
+   pyinstaller --onefile --windowed --name LiFi-PV-Simulator cli.py
+
+Generated Output:
+   workspace/validation/           All validation figures (23 PNGs)
+   schematics/                     Circuit schematics (8 SVGs)
+   workspace/session_*/            Simulation sessions
+
+================================================================================
+   END OF PROJECT SUMMARY
+================================================================================

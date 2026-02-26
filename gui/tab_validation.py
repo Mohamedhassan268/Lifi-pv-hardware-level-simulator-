@@ -7,8 +7,10 @@ simulated values against published targets.
 Reads .raw files to extract measured values after simulation.
 """
 
-import sys, os, glob
+import sys, os, glob, logging
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 from PyQt6.QtWidgets import (
@@ -22,6 +24,7 @@ from PyQt6.QtGui import QColor, QPixmap
 
 from cosim.system_config import SystemConfig
 from cosim.raw_parser import LTSpiceRawParser
+from gui.theme import COLORS
 
 
 class ValidationTab(QWidget):
@@ -52,7 +55,7 @@ class ValidationTab(QWidget):
         # Paper info
         self._paper_label = QLabel()
         self._paper_label.setWordWrap(True)
-        self._paper_label.setStyleSheet('color: #555; padding: 5px;')
+        self._paper_label.setStyleSheet(f'color: {COLORS["text_dim"]}; padding: 5px;')
         main.addWidget(self._paper_label)
 
         # Validation table
@@ -96,7 +99,7 @@ class ValidationTab(QWidget):
         fig_layout.addLayout(fig_top)
 
         self._fig_status = QLabel('Ready')
-        self._fig_status.setStyleSheet('color: #555; padding: 2px;')
+        self._fig_status.setStyleSheet(f'color: {COLORS["text_dim"]}; padding: 2px;')
         fig_layout.addWidget(self._fig_status)
 
         # Image list + preview
@@ -108,7 +111,8 @@ class ValidationTab(QWidget):
         self._fig_preview = QLabel('Select a figure to preview')
         self._fig_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._fig_preview.setMinimumSize(400, 300)
-        self._fig_preview.setStyleSheet('background: #f0f0f0; border: 1px solid #ccc;')
+        self._fig_preview.setStyleSheet(
+            f'background: {COLORS["surface"]}; border: 1px solid {COLORS["border"]};')
         scroll = QScrollArea()
         scroll.setWidget(self._fig_preview)
         scroll.setWidgetResizable(True)
@@ -133,7 +137,8 @@ class ValidationTab(QWidget):
             if raw_path:
                 try:
                     self._parser = LTSpiceRawParser(raw_path)
-                except Exception:
+                except Exception as e:
+                    logger.warning("Failed to parse .raw file %s: %s", raw_path, e)
                     self._parser = None
 
         self._update_table_with_results()
@@ -143,8 +148,8 @@ class ValidationTab(QWidget):
             try:
                 self._config = SystemConfig.from_preset(name)
                 self._update_targets()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to load preset '%s': %s", name, e)
 
     def _update_targets(self):
         cfg = self._config
@@ -164,7 +169,7 @@ class ValidationTab(QWidget):
             self._table.setItem(i, 2, QTableWidgetItem('--'))
             self._table.setItem(i, 3, QTableWidgetItem('--'))
             item = QTableWidgetItem('Pending')
-            item.setForeground(QColor(150, 150, 150))
+            item.setForeground(QColor(COLORS['idle']))
             self._table.setItem(i, 4, item)
 
         self._summary_label.setText(
@@ -219,8 +224,8 @@ class ValidationTab(QWidget):
                 {'param': 'V_INA RMS (mV)', 'target': None,
                  'target_str': '--', 'extract': 'v_ina_rms'},
             ])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to compute link budget rows: %s", e)
 
         return rows
 
@@ -284,8 +289,8 @@ class ValidationTab(QWidget):
         # Derived
         try:
             simulated['lambertian'] = cfg.lambertian_order()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Could not compute Lambertian order: %s", e)
 
         # Fill table
         n_pass = 0
@@ -318,11 +323,11 @@ class ValidationTab(QWidget):
                     n_total += 1
                     if error_pct < 20:
                         status = 'PASS'
-                        color = QColor(40, 160, 40)
+                        color = QColor(COLORS['success'])
                         n_pass += 1
                     else:
                         status = 'FAIL'
-                        color = QColor(200, 40, 40)
+                        color = QColor(COLORS['error'])
                         n_fail += 1
 
                     item = QTableWidgetItem(status)
@@ -331,13 +336,13 @@ class ValidationTab(QWidget):
                 else:
                     self._table.setItem(i, 3, QTableWidgetItem('--'))
                     item = QTableWidgetItem('Measured')
-                    item.setForeground(QColor(0, 100, 200))
+                    item.setForeground(QColor(COLORS['info']))
                     self._table.setItem(i, 4, item)
             else:
                 self._table.setItem(i, 2, QTableWidgetItem('--'))
                 self._table.setItem(i, 3, QTableWidgetItem('--'))
                 item = QTableWidgetItem('No data')
-                item.setForeground(QColor(150, 150, 150))
+                item.setForeground(QColor(COLORS['idle']))
                 self._table.setItem(i, 4, item)
 
         if n_total > 0:
@@ -357,7 +362,7 @@ class ValidationTab(QWidget):
         paper_key = self._fig_paper_combo.currentData()
         self._fig_run_btn.setEnabled(False)
         self._fig_status.setText('Running validation...')
-        self._fig_status.setStyleSheet('color: #0066cc;')
+        self._fig_status.setStyleSheet(f'color: {COLORS["info"]};')
 
         self._fig_thread = _FigureWorker(paper_key)
         self._fig_thread.finished.connect(self._on_figures_done)
@@ -368,11 +373,11 @@ class ValidationTab(QWidget):
         self._fig_run_btn.setEnabled(True)
         if success:
             self._fig_status.setText(f'Done: {message}')
-            self._fig_status.setStyleSheet('color: green;')
+            self._fig_status.setStyleSheet(f'color: {COLORS["success"]};')
             self._load_figure_list(output_dir)
         else:
             self._fig_status.setText(f'Error: {message}')
-            self._fig_status.setStyleSheet('color: red;')
+            self._fig_status.setStyleSheet(f'color: {COLORS["error"]};')
 
     def _load_figure_list(self, output_dir):
         """Populate figure list from generated PNGs."""

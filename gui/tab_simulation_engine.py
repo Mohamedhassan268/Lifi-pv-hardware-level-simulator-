@@ -24,6 +24,8 @@ from cosim.system_config import SystemConfig
 from cosim.session import SessionManager
 from cosim.pipeline import SimulationPipeline
 from cosim.ltspice_runner import LTSpiceRunner
+from cosim.spice_finder import spice_available, find_ngspice
+from gui.theme import COLORS
 from gui.widgets import StatusIndicator, MplCanvas
 
 
@@ -96,11 +98,24 @@ class SimulationEngineTab(QWidget):
         status_row = QHBoxLayout()
         ltspice_status = ('Available' if self._ltspice.available
                           else 'Not found')
-        self._ltspice_label = QLabel(f'LTspice: {ltspice_status}')
+        ngspice_path = find_ngspice()
+        ngspice_status = 'Available' if ngspice_path else 'Not found'
+        self._ltspice_label = QLabel(
+            f'LTspice: {ltspice_status} | ngspice: {ngspice_status}')
         status_row.addWidget(self._ltspice_label)
         self._engine_mode_label = QLabel('')
         self._engine_mode_label.setStyleSheet('font-weight: bold; padding: 2px 8px;')
         status_row.addWidget(self._engine_mode_label)
+
+        # SPICE fallback warning
+        if not spice_available():
+            self._spice_warning = QLabel(
+                'No SPICE engine found — SPICE presets will use Python engine')
+            self._spice_warning.setStyleSheet(
+                f'color: {COLORS["warning"]}; background: {COLORS["warning_bg"]}; '
+                f'padding: 2px 8px; border-radius: 3px; font-size: 11px;')
+            status_row.addWidget(self._spice_warning)
+
         status_row.addStretch()
         self._session_label = QLabel('Session: (none)')
         status_row.addWidget(self._session_label)
@@ -132,7 +147,7 @@ class SimulationEngineTab(QWidget):
 
         # PWL bridge indicator
         pwl_label = QLabel('     [i_ph.pwl bridge file]')
-        pwl_label.setStyleSheet('color: #888; font-style: italic;')
+        pwl_label.setStyleSheet(f'color: {COLORS["text_dim"]}; font-style: italic;')
         pipe_layout.addWidget(pwl_label)
 
         # Arrow
@@ -155,7 +170,8 @@ class SimulationEngineTab(QWidget):
         btn_row.addStretch()
         btn_row.addWidget(self._run_all_btn)
         self._elapsed_label = QLabel('')
-        self._elapsed_label.setStyleSheet('color: #666; font-size: 11px; padding-left: 10px;')
+        self._elapsed_label.setStyleSheet(
+            f'color: {COLORS["text_dim"]}; font-size: 11px; padding-left: 10px;')
         btn_row.addWidget(self._elapsed_label)
         btn_row.addStretch()
         pipe_layout.addLayout(btn_row)
@@ -215,7 +231,7 @@ class SimulationEngineTab(QWidget):
         indicator = StatusIndicator()
         label = QLabel(f'<b>{title}</b>: {description}')
         status_label = QLabel('')
-        status_label.setStyleSheet('color: #666;')
+        status_label.setStyleSheet(f'color: {COLORS["text_dim"]};')
         layout.addWidget(indicator)
         layout.addWidget(label)
         layout.addStretch()
@@ -224,7 +240,7 @@ class SimulationEngineTab(QWidget):
 
     def _arrow_label(self):
         lbl = QLabel('        |')
-        lbl.setStyleSheet('color: #999; font-size: 14px;')
+        lbl.setStyleSheet(f'color: {COLORS["text_dim"]}; font-size: 14px;')
         return lbl
 
     def update_config(self, config: SystemConfig):
@@ -238,13 +254,13 @@ class SimulationEngineTab(QWidget):
         if engine == 'python':
             self._engine_mode_label.setText(f'Engine: Python ({mod})')
             self._engine_mode_label.setStyleSheet(
-                'font-weight: bold; color: #4CAF50; padding: 2px 8px;'
-                'background: #E8F5E9; border-radius: 3px;')
+                f'font-weight: bold; color: {COLORS["success"]}; padding: 2px 8px;'
+                f'background: {COLORS["success_bg"]}; border-radius: 3px;')
         else:
             self._engine_mode_label.setText(f'Engine: SPICE ({mod})')
             self._engine_mode_label.setStyleSheet(
-                'font-weight: bold; color: #2196F3; padding: 2px 8px;'
-                'background: #E3F2FD; border-radius: 3px;')
+                f'font-weight: bold; color: {COLORS["info"]}; padding: 2px 8px;'
+                f'background: {COLORS["surface_alt"]}; border-radius: 3px;')
 
     def set_ltspice_runner(self, runner: LTSpiceRunner):
         """Update LTspice runner (e.g. after user sets a new path)."""
@@ -299,16 +315,36 @@ class SimulationEngineTab(QWidget):
         if step in indicator_map:
             indicator_map[step].status = status
         if step in label_map:
+            if status == 'error':
+                label_map[step].setStyleSheet(
+                    f'color: {COLORS["error"]}; font-weight: bold;')
+            elif status == 'done':
+                label_map[step].setStyleSheet(f'color: {COLORS["success"]};')
+            else:
+                label_map[step].setStyleSheet(f'color: {COLORS["text_dim"]};')
             label_map[step].setText(message)
 
     def _on_finished(self, results):
         self._ui_timer.stop()
         elapsed_s = self._elapsed_timer.elapsed() / 1000.0
-        self._elapsed_label.setText(f'Completed in {elapsed_s:.1f}s')
+
+        # Check for errors in any step
+        errors = [name for name, r in results.items()
+                  if hasattr(r, 'status') and r.status == 'error']
+        if errors:
+            self._elapsed_label.setText(
+                f'Completed with errors in {elapsed_s:.1f}s')
+            self._elapsed_label.setStyleSheet(
+                f'color: {COLORS["error"]}; font-size: 11px; padding-left: 10px;')
+            self._log_msg(f'Pipeline finished with errors in: {", ".join(errors)}')
+        else:
+            self._elapsed_label.setText(f'Completed in {elapsed_s:.1f}s')
+            self._elapsed_label.setStyleSheet(
+                f'color: {COLORS["success"]}; font-size: 11px; padding-left: 10px;')
+            self._log_msg(f'Pipeline complete. ({elapsed_s:.1f}s elapsed)')
 
         self._last_results = results
         self._set_buttons_enabled(True)
-        self._log_msg(f'Pipeline complete. ({elapsed_s:.1f}s elapsed)')
 
         # Update preview plots
         self._update_preview(results)
@@ -407,7 +443,10 @@ class SimulationEngineTab(QWidget):
                     axes[3].text(0.1, 0.5, info_text,
                                  ha='left', va='center', transform=axes[3].transAxes,
                                  fontsize=9, fontfamily='monospace',
-                                 bbox=dict(boxstyle='round', facecolor='lightyellow'))
+                                 color=COLORS['text'],
+                                 bbox=dict(boxstyle='round',
+                                           facecolor=COLORS['accent_bg'],
+                                           edgecolor=COLORS['accent_dim']))
                     axes[3].set_title('Results Summary', fontsize=9)
                     axes[3].set_axis_off()
                 except Exception as e:
@@ -452,12 +491,12 @@ class SimulationEngineTab(QWidget):
                 for i in [2, 3]:
                     axes[i].text(0.5, 0.5, f'RX: {rx.message}',
                                  ha='center', va='center', transform=axes[i].transAxes,
-                                 fontsize=8, color='green')
+                                 fontsize=8, color=COLORS['success'])
         else:
             for i in [2, 3]:
                 axes[i].text(0.5, 0.5, 'Run simulation to see results',
                              ha='center', va='center', transform=axes[i].transAxes,
-                             fontsize=9, color='gray')
+                             fontsize=9, color=COLORS['text_dim'])
 
         self._preview_canvas.fig.tight_layout()
         self._preview_canvas.draw()

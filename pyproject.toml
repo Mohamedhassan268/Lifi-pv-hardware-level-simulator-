@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lifi-pv-simulator"
+version = "1.0.0"
+description = "Hardware-faithful component-level simulator for LiFi-PV (SLIPT) systems"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Mohamed Hassan"},
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "schemdraw>=0.18",
+]
+
+[project.optional-dependencies]
+gui = ["PyQt6>=6.5"]
+dev = [
+    "pytest>=7.0",
+    "pyinstaller>=6.0",
+]
+all = ["lifi-pv-simulator[gui,dev]"]
+
+[project.scripts]
+lifi-pv = "cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Mohamedhassan268/Lifi-pv-hardware-level-simulator-"
+
+[tool.setuptools.packages.find]
+include = [
+    "components*",
+    "cosim*",
+    "gui*",
+    "materials*",
+    "papers*",
+    "physics*",
+    "simulation*",
+    "systems*",
+    "spice_parser*",
+    "budget*",
+    "integration*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gui: marks tests requiring a display (deselect with '-m not gui')",
+    "spice: marks tests requiring ngspice/LTspice",
+]

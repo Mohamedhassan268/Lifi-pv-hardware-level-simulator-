@@ -20,6 +20,7 @@ Usage:
     pipe.run_step_rx()
 """
 
+import logging
 import numpy as np
 from pathlib import Path
 from typing import Dict, Optional, Callable
@@ -29,6 +30,9 @@ from .system_config import SystemConfig
 from .pwl_writer import write_photocurrent_pwl
 from .ltspice_runner import LTSpiceRunner
 from .raw_parser import LTSpiceRawParser
+from .spice_finder import spice_available
+
+logger = logging.getLogger(__name__)
 
 
 class StepResult:
@@ -323,6 +327,16 @@ class SimulationPipeline:
         if engine == 'python':
             return self.run_python_engine()
 
+        # Graceful degradation: if SPICE requested but unavailable, fall back
+        if engine == 'spice' and not self.ltspice.available and not spice_available():
+            logger.warning(
+                "SPICE engine requested but no SPICE simulator found. "
+                "Falling back to Python engine."
+            )
+            self._notify('RX', 'running',
+                         'No SPICE engine found — falling back to Python engine')
+            return self.run_python_engine()
+
         # Default: SPICE pipeline
         self.run_step_tx()
         if self.step_tx.status != 'done':
@@ -449,8 +463,8 @@ class SimulationPipeline:
             }
             (data_dir / 'python_summary.json').write_text(
                 json.dumps(summary, indent=2), encoding='utf-8')
-        except Exception:
-            pass  # Don't fail the simulation if saving fails
+        except Exception as e:
+            logger.warning("Failed to save Python results: %s", e)
 
     def compute_ber(self) -> Optional[Dict]:
         """

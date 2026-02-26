@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from cosim.system_config import SystemConfig
+from gui.theme import COLORS
 from gui.widgets import MplCanvas
 
 
@@ -42,7 +43,7 @@ class ChannelConfigTab(QWidget):
 
         # Component info
         self._info_label = QLabel()
-        self._info_label.setStyleSheet('font-size: 11px; color: #555;')
+        self._info_label.setStyleSheet(f'font-size: 11px; color: {COLORS["text_dim"]};')
         left_layout.addWidget(self._info_label)
 
         # Controls

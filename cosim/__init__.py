@@ -20,6 +20,7 @@ from .raw_parser import LTSpiceRawParser
 from .pwl_writer import write_photocurrent_pwl
 from .session import SessionManager
 from .pipeline import SimulationPipeline
+from .spice_finder import find_ngspice, find_ltspice, spice_available
 
 __all__ = [
     'SystemConfig',
@@ -28,4 +29,7 @@ __all__ = [
     'write_photocurrent_pwl',
     'SessionManager',
     'SimulationPipeline',
+    'find_ngspice',
+    'find_ltspice',
+    'spice_available',
 ]

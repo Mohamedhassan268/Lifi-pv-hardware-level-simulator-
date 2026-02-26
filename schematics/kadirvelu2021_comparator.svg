@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-02-21T13:59:02.495384</dc:date>
+    <dc:date>2026-02-25T03:01:39.310611</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -34,13 +34,13 @@ z
     <path d="M 37.8 68.28 
 L 55.8 68.28 
 L 73.8 68.28 
-" clip-path="url(#p0b1149b0e6)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
+" clip-path="url(#p15d63d2e97)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_2">
     <path d="M 37.8 104.28 
 L 55.8 104.28 
 L 73.8 104.28 
-" clip-path="url(#p0b1149b0e6)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
+" clip-path="url(#p15d63d2e97)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_3">
     <path d="M 109.8 104.28 
@@ -49,28 +49,28 @@ L 172.153829 104.28
 L 109.8 140.28 
 L 109.8 104.28 
 M 172.153829 104.28 
-" clip-path="url(#p0b1149b0e6)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
+" clip-path="url(#p15d63d2e97)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_4">
     <path d="M 114.714229 86.28 
 L 120.474229 86.28 
-" clip-path="url(#p0b1149b0e6)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
+" clip-path="url(#p15d63d2e97)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_5">
     <path d="M 114.714229 122.28 
 L 120.474229 122.28 
-" clip-path="url(#p0b1149b0e6)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
+" clip-path="url(#p15d63d2e97)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_6">
     <path d="M 117.594229 125.16 
 L 117.594229 119.4 
-" clip-path="url(#p0b1149b0e6)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
+" clip-path="url(#p15d63d2e97)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="line2d_7">
     <path d="M 172.153829 104.28 
 L 190.153829 104.28 
 L 208.153829 104.28 
-" clip-path="url(#p0b1149b0e6)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
+" clip-path="url(#p15d63d2e97)" style="fill: none; stroke: #000000; stroke-width: 2; stroke-linecap: round"/>
    </g>
    <g id="text_1">
     <!-- TLV7011 Comparator (Data Recovery) -->
@@ -982,7 +982,7 @@ C 35.384489 66.877134 35.1 67.563952 35.1 68.28
 C 35.1 68.996048 35.384489 69.682866 35.890812 70.189188 
 C 36.397134 70.695511 37.083952 70.98 37.8 70.98 
 z
-" clip-path="url(#p0b1149b0e6)" style="stroke: #000000; stroke-width: 2; stroke-linejoin: miter"/>
+" clip-path="url(#p15d63d2e97)" style="stroke: #000000; stroke-width: 2; stroke-linejoin: miter"/>
    </g>
    <g id="text_4">
     <!-- $V_{bpf}$ -->
@@ -1069,7 +1069,7 @@ C 35.384489 102.877134 35.1 103.563952 35.1 104.28
 C 35.1 104.996048 35.384489 105.682866 35.890812 106.189188 
 C 36.397134 106.695511 37.083952 106.98 37.8 106.98 
 z
-" clip-path="url(#p0b1149b0e6)" style="stroke: #000000; stroke-width: 2; stroke-linejoin: miter"/>
+" clip-path="url(#p15d63d2e97)" style="stroke: #000000; stroke-width: 2; stroke-linejoin: miter"/>
    </g>
    <g id="text_5">
     <!-- $V_{ref}$ -->
@@ -1159,7 +1159,7 @@ C 205.738318 102.877134 205.453829 103.563952 205.453829 104.28
 C 205.453829 104.996048 205.738318 105.682866 206.244641 106.189188 
 C 206.750963 106.695511 207.437781 106.98 208.153829 106.98 
 z
-" clip-path="url(#p0b1149b0e6)" style="stroke: #000000; stroke-width: 2; stroke-linejoin: miter"/>
+" clip-path="url(#p15d63d2e97)" style="stroke: #000000; stroke-width: 2; stroke-linejoin: miter"/>
    </g>
    <g id="text_6">
     <!-- $d_{out}$ -->
@@ -1225,7 +1225,7 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="p0b1149b0e6">
+  <clipPath id="p15d63d2e97">
    <rect x="0" y="0" width="250.08" height="152.56"/>
   </clipPath>
  </defs>

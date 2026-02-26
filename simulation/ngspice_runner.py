@@ -22,9 +22,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
-# Auto-detect bundled ngspice
-_BASE_DIR = Path(__file__).parent.parent
-_DEFAULT_NGSPICE = _BASE_DIR / 'ngspice-45.2_64' / 'Spice64' / 'bin' / 'ngspice.exe'
+# Use centralized SPICE finder for auto-detection
+from cosim.spice_finder import find_ngspice as _find_ngspice
 
 
 class NgSpiceRunner:
@@ -46,10 +45,7 @@ class NgSpiceRunner:
                           Auto-detects bundled version if None.
         """
         if ngspice_path is None:
-            if _DEFAULT_NGSPICE.exists():
-                ngspice_path = str(_DEFAULT_NGSPICE)
-            else:
-                ngspice_path = 'ngspice'  # Hope it's on PATH
+            ngspice_path = _find_ngspice() or 'ngspice'
 
         self.ngspice_path = ngspice_path
         self._verify_ngspice()
@@ -57,9 +53,14 @@ class NgSpiceRunner:
     def _verify_ngspice(self):
         """Check that ngspice is accessible."""
         try:
+            # Use CREATE_NO_WINDOW on Windows to prevent GUI popup
+            kwargs = {}
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
             result = subprocess.run(
                 [self.ngspice_path, '--version'],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
+                **kwargs,
             )
             if result.returncode == 0:
                 version = result.stdout.strip().split('\n')[0]
@@ -115,10 +116,13 @@ quit
         print(f"  Netlist: {netlist_path}")
 
         try:
+            kwargs = {}
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
             result = subprocess.run(
                 [self.ngspice_path, '-b', control_file],
                 capture_output=True, text=True, timeout=timeout,
-                cwd=output_dir
+                cwd=output_dir, **kwargs,
             )
 
             if result.returncode != 0:
@@ -184,10 +188,13 @@ quit
         print("Running ngspice AC analysis...")
 
         try:
+            kwargs = {}
+            if sys.platform == 'win32':
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
             result = subprocess.run(
                 [self.ngspice_path, '-b', control_file],
                 capture_output=True, text=True, timeout=timeout,
-                cwd=output_dir
+                cwd=output_dir, **kwargs,
             )
 
             if result.returncode != 0:

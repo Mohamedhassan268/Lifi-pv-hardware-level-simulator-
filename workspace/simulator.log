@@ -1,0 +1,29 @@
+2026-02-26 02:38:15 [INFO] gui.main_window: MainWindow initialized (LTspice=OK, ngspice=OK)
+2026-02-26 02:38:20 [INFO] gui.main_window: Config changed to: kadirvelu2021
+2026-02-26 02:38:25 [INFO] gui.main_window: Config changed to: xu2024
+2026-02-26 02:38:27 [INFO] gui.main_window: Config changed to: xu2024
+2026-02-26 02:38:27 [INFO] gui.main_window: Config changed to: xu2024
+2026-02-26 02:38:27 [INFO] gui.main_window: Config changed to: xu2024
+2026-02-26 02:38:35 [INFO] gui.main_window: Config changed to: sarwar2017
+2026-02-26 02:38:42 [INFO] gui.main_window: Config changed to: correa2025
+2026-02-26 02:38:48 [INFO] gui.main_window: Config changed to: kadirvelu2021
+2026-02-26 02:52:53 [INFO] gui.main_window: MainWindow initialized (LTspice=OK, ngspice=OK)
+2026-02-26 12:33:26 [INFO] gui.main_window: MainWindow initialized (LTspice=OK, ngspice=OK)
+2026-02-26 12:34:02 [INFO] gui.main_window: Wizard applied preset: kadirvelu2021
+2026-02-26 12:34:12 [INFO] gui.main_window: Preset loaded: correa2025
+2026-02-26 12:34:33 [INFO] gui.main_window: LTspice path set: C:/Users/HP OMEN/OneDrive/Desktop/gradproject/components level sim/hardware_faithful_simulator/hardware_faithful_simulator/ngspice-45.2_64/Spice64/bin/ngspice.exe
+2026-02-26 12:49:30 [INFO] gui.main_window: MainWindow initialized (LTspice=OK, ngspice=OK)
+2026-02-26 12:50:56 [INFO] gui.main_window: Wizard applied preset: kadirvelu2021
+2026-02-26 14:25:37 [INFO] gui.main_window: Wizard applied preset: kadirvelu2021
+2026-02-26 17:50:51 [INFO] gui.main_window: MainWindow initialized (LTspice=OK, ngspice=OK)
+2026-02-26 18:52:56 [INFO] gui.main_window: MainWindow initialized (LTspice=OK, ngspice=OK)
+2026-02-26 18:53:04 [INFO] gui.main_window: Config changed to: oliveira2024
+2026-02-26 18:53:06 [INFO] gui.main_window: Config changed to: fakidis2020
+2026-02-26 18:53:13 [INFO] gui.main_window: Config changed to: correa2025
+2026-02-26 18:53:17 [INFO] gui.main_window: Config changed to: fakidis2020
+2026-02-26 18:53:19 [INFO] gui.main_window: Config changed to: gonzalez2024
+2026-02-26 18:53:22 [INFO] gui.main_window: Config changed to: oliveira2024
+2026-02-26 18:53:23 [INFO] gui.main_window: Config changed to: sarwar2017
+2026-02-26 18:53:26 [INFO] gui.main_window: Config changed to: xu2024
+2026-02-26 18:53:49 [INFO] gui.main_window: Config changed to: kadirvelu2021
+2026-02-26 22:18:17 [INFO] gui.main_window: MainWindow initialized (LTspice=OK, ngspice=OK)

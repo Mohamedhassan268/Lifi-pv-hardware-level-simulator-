@@ -20,8 +20,41 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from cosim.system_config import SystemConfig
-from gui.widgets import QuickInfoPanel
+from gui.theme import COLORS
+from gui.widgets import QuickInfoPanel, WarningsPanel
 
+
+# Human-readable preset descriptions
+_PRESET_INFO = {
+    'kadirvelu2021': (
+        'Indoor SLIPT System',
+        'Communication + energy harvesting at 30 cm, 5 kbps OOK.\n'
+        'SPICE engine | Full RX chain (INA + BPF + comparator + DC-DC)'),
+    'fakidis2020': (
+        'Indoor VLC Link Budget',
+        'Detailed link budget analysis at 50 cm with OOK modulation.\n'
+        'SPICE engine | Focus on receiver sensitivity'),
+    'sarwar2017': (
+        'High-Speed OFDM LiFi',
+        'OFDM with 16-QAM at 1.25 m, testing multi-carrier performance.\n'
+        'Python engine | OFDM modulation | High data rate'),
+    'xu2024': (
+        'Low-Power BFSK Link',
+        'BFSK modulation optimized for indoor energy harvesting.\n'
+        'Python engine | BFSK modulation'),
+    'gonzalez2024': (
+        'Manchester-Coded OOK',
+        'Manchester coding for improved clock recovery.\n'
+        'SPICE engine | OOK Manchester encoding'),
+    'correa2025': (
+        'Greenhouse SLIPT',
+        'PWM-ASK modulation for greenhouse monitoring with humidity.\n'
+        'Python engine | PWM-ASK | Environmental factors'),
+    'oliveira2024': (
+        'High-Speed OFDM-QAM',
+        'Advanced OFDM with multi-cell PV receiver.\n'
+        'Python engine | 64-QAM OFDM | Multi-cell receiver'),
+}
 
 # Map component types to their registry keys
 _LED_PARTS = ['LXM5-PD01']
@@ -35,6 +68,7 @@ class SystemSetupTab(QWidget):
     """Tab 1: System configuration with component selection."""
 
     config_changed = pyqtSignal(object)  # emits SystemConfig
+    wizard_requested = pyqtSignal()     # user clicked Quick Start
 
     def __init__(self, config: SystemConfig, parent=None):
         super().__init__(parent)
@@ -52,6 +86,16 @@ class SystemSetupTab(QWidget):
         left = QWidget()
         left_layout = QVBoxLayout(left)
 
+        # Quick Start button
+        self._btn_wizard = QPushButton('Quick Start Guide')
+        self._btn_wizard.setToolTip(
+            'Step-by-step wizard to help you set up\n'
+            'a simulation without deep technical knowledge.')
+        self._btn_wizard.setStyleSheet(
+            f'font-weight: bold; padding: 8px; font-size: 12px;')
+        self._btn_wizard.clicked.connect(self.wizard_requested.emit)
+        left_layout.addWidget(self._btn_wizard)
+
         # Preset selector
         preset_grp = QGroupBox('Preset')
         preset_lay = QVBoxLayout(preset_grp)
@@ -61,6 +105,15 @@ class SystemSetupTab(QWidget):
             self._preset_combo.addItem(name)
         self._preset_combo.currentTextChanged.connect(self._on_preset_changed)
         preset_lay.addWidget(self._preset_combo)
+
+        # Preset description card
+        self._preset_desc = QLabel('Select a preset to see details')
+        self._preset_desc.setWordWrap(True)
+        self._preset_desc.setStyleSheet(
+            f'color: {COLORS["text_dim"]}; font-size: 11px; '
+            f'padding: 6px; background: {COLORS["surface_alt"]}; '
+            f'border-radius: 4px; border-left: 3px solid {COLORS["accent"]};')
+        preset_lay.addWidget(self._preset_desc)
 
         btn_row = QHBoxLayout()
         self._btn_load = QPushButton('Load...')
@@ -75,6 +128,10 @@ class SystemSetupTab(QWidget):
         # Quick Info
         self._quick_info = QuickInfoPanel()
         left_layout.addWidget(self._quick_info)
+
+        # Live Warnings
+        self._warnings = WarningsPanel()
+        left_layout.addWidget(self._warnings)
         left_layout.addStretch()
 
         # ---- Right area ----
@@ -86,27 +143,45 @@ class SystemSetupTab(QWidget):
         tx_form = QFormLayout(tx_grp)
         self._led_combo = QComboBox()
         self._led_combo.addItems(_LED_PARTS)
+        self._led_combo.setToolTip(
+            'LED used for optical transmission.\n'
+            'Determines max power and spectral output.')
         tx_form.addRow('LED:', self._led_combo)
 
         self._driver_combo = QComboBox()
         self._driver_combo.addItems(_DRIVER_PARTS)
+        self._driver_combo.setToolTip(
+            'Op-amp driving the LED.\n'
+            'Affects modulation bandwidth and signal fidelity.')
         tx_form.addRow('Driver:', self._driver_combo)
 
         self._mod_depth = QDoubleSpinBox()
         self._mod_depth.setRange(0.01, 1.0)
         self._mod_depth.setSingleStep(0.05)
         self._mod_depth.setDecimals(2)
+        self._mod_depth.setToolTip(
+            'How deeply the LED is modulated (0-1).\n'
+            'Higher = stronger signal but less DC for harvesting.\n'
+            'Typical: 0.3 - 0.8')
         tx_form.addRow('Mod. Depth:', self._mod_depth)
 
         self._led_power = QDoubleSpinBox()
         self._led_power.setRange(0.1, 100.0)
         self._led_power.setSingleStep(0.5)
         self._led_power.setSuffix(' mW')
+        self._led_power.setToolTip(
+            'Total radiated optical power from the LED.\n'
+            'Higher = longer range but more power consumption.\n'
+            'Typical indoor: 5 - 50 mW')
         tx_form.addRow('Radiated Power:', self._led_power)
 
         self._half_angle = QDoubleSpinBox()
         self._half_angle.setRange(1.0, 90.0)
         self._half_angle.setSuffix(' deg')
+        self._half_angle.setToolTip(
+            'LED beam half-angle (at half-power point).\n'
+            'Narrow (15\u00b0) = focused beam, longer range.\n'
+            'Wide (60\u00b0) = broad coverage, shorter range.')
         tx_form.addRow('Half Angle:', self._half_angle)
 
         right_layout.addWidget(tx_grp)
@@ -120,22 +195,38 @@ class SystemSetupTab(QWidget):
         self._distance.setSingleStep(0.05)
         self._distance.setDecimals(3)
         self._distance.setSuffix(' m')
+        self._distance.setToolTip(
+            'Distance between LED transmitter and PV receiver.\n'
+            'This is the most critical parameter for link budget.\n'
+            'Typical indoor: 0.1 - 2.0 m')
         ch_form.addRow('Distance:', self._distance)
 
         self._tx_angle = QDoubleSpinBox()
         self._tx_angle.setRange(0.0, 89.0)
         self._tx_angle.setSuffix(' deg')
+        self._tx_angle.setToolTip(
+            'Angle of the LED off the vertical axis.\n'
+            '0\u00b0 = pointing straight down at the receiver.\n'
+            'Larger angles reduce the received power.')
         ch_form.addRow('TX Angle:', self._tx_angle)
 
         self._rx_tilt = QDoubleSpinBox()
         self._rx_tilt.setRange(0.0, 89.0)
         self._rx_tilt.setSuffix(' deg')
+        self._rx_tilt.setToolTip(
+            'Tilt of the receiver from horizontal.\n'
+            '0\u00b0 = facing straight up at the LED.\n'
+            'Non-zero tilt reduces effective collection area.')
         ch_form.addRow('RX Tilt:', self._rx_tilt)
 
         self._lens_t = QDoubleSpinBox()
         self._lens_t.setRange(0.0, 1.0)
         self._lens_t.setSingleStep(0.05)
         self._lens_t.setDecimals(2)
+        self._lens_t.setToolTip(
+            'Optical lens/filter transmittance (0-1).\n'
+            'Accounts for concentrator or optical filter losses.\n'
+            '1.0 = no loss, 0.5 = 50% loss')
         ch_form.addRow('Lens T:', self._lens_t)
 
         right_layout.addWidget(ch_grp)
@@ -146,28 +237,48 @@ class SystemSetupTab(QWidget):
 
         self._pv_combo = QComboBox()
         self._pv_combo.addItems(_PV_PARTS)
+        self._pv_combo.setToolTip(
+            'Photovoltaic cell used as receiver.\n'
+            'Determines responsivity (A/W) and energy harvesting capability.')
         rx_form.addRow('PV Cell:', self._pv_combo)
 
         self._ina_combo = QComboBox()
         self._ina_combo.addItems(_INA_PARTS)
+        self._ina_combo.setToolTip(
+            'Instrumentation amplifier for signal extraction.\n'
+            'Amplifies the small AC signal from the PV cell.')
         rx_form.addRow('INA:', self._ina_combo)
 
         self._comp_combo = QComboBox()
         self._comp_combo.addItems(_COMP_PARTS)
+        self._comp_combo.setToolTip(
+            'Comparator for digital signal recovery.\n'
+            'Converts the analog signal back to digital bits (OOK).')
         rx_form.addRow('Comparator:', self._comp_combo)
 
         self._r_sense = QDoubleSpinBox()
         self._r_sense.setRange(0.01, 1000.0)
         self._r_sense.setSuffix(' Ohm')
+        self._r_sense.setToolTip(
+            'Sense resistor converting photocurrent to voltage.\n'
+            'Higher = more signal but also more noise.\n'
+            'Typical: 10 - 100 Ohm')
         rx_form.addRow('R_sense:', self._r_sense)
 
         self._bpf_stages = QSpinBox()
         self._bpf_stages.setRange(1, 4)
+        self._bpf_stages.setToolTip(
+            'Number of bandpass filter stages in the RX chain.\n'
+            'More stages = cleaner signal but added delay/complexity.\n'
+            'Typical: 1 - 2 stages')
         rx_form.addRow('BPF Stages:', self._bpf_stages)
 
         self._dcdc_fsw = QDoubleSpinBox()
         self._dcdc_fsw.setRange(1.0, 1000.0)
         self._dcdc_fsw.setSuffix(' kHz')
+        self._dcdc_fsw.setToolTip(
+            'DC-DC converter switching frequency for energy harvesting.\n'
+            'Should be well above the data rate to avoid interference.')
         rx_form.addRow('DC-DC fsw:', self._dcdc_fsw)
 
         right_layout.addWidget(rx_grp)
@@ -180,16 +291,28 @@ class SystemSetupTab(QWidget):
         self._data_rate.setRange(100, 1e6)
         self._data_rate.setSuffix(' bps')
         self._data_rate.setDecimals(0)
+        self._data_rate.setToolTip(
+            'Bit rate for the communication link.\n'
+            'Higher rates need stronger signals (more SNR).\n'
+            'OOK typical: 1k - 100k bps | OFDM: up to 10 Mbps')
         sim_form.addRow('Data Rate:', self._data_rate)
 
         self._n_bits = QSpinBox()
         self._n_bits.setRange(10, 100000)
+        self._n_bits.setToolTip(
+            'Number of pseudo-random bits to simulate.\n'
+            'More bits = more accurate BER estimate but longer sim.\n'
+            'Quick test: 100 | Accurate BER: 10000+')
         sim_form.addRow('PRBS Bits:', self._n_bits)
 
         self._t_stop = QDoubleSpinBox()
         self._t_stop.setRange(1e-6, 1.0)
         self._t_stop.setDecimals(6)
         self._t_stop.setSuffix(' s')
+        self._t_stop.setToolTip(
+            'Simulation end time in seconds.\n'
+            'Must be >= n_bits / data_rate to transmit all bits.\n'
+            'Auto-calculated from preset parameters.')
         sim_form.addRow('t_stop:', self._t_stop)
 
         self._noise_enable = QCheckBox('Enable transient noise sources')
@@ -201,8 +324,8 @@ class SystemSetupTab(QWidget):
         # Engine indicator
         self._engine_label = QLabel('SPICE')
         self._engine_label.setStyleSheet(
-            'font-weight: bold; color: #2196F3; padding: 2px 6px;'
-            'background: #E3F2FD; border-radius: 3px;')
+            f'font-weight: bold; color: {COLORS["info"]}; padding: 2px 6px;'
+            f'background: {COLORS["surface_alt"]}; border-radius: 3px;')
         sim_form.addRow('Engine:', self._engine_label)
 
         # Modulation type display
@@ -222,35 +345,61 @@ class SystemSetupTab(QWidget):
         self._humidity.setSingleStep(0.05)
         self._humidity.setDecimals(2)
         self._humidity.setSpecialValueText('(disabled)')
+        self._humidity.setToolTip(
+            'Relative humidity (0-1).\n'
+            'Affects atmospheric absorption at longer distances.\n'
+            'Relevant for greenhouse/outdoor scenarios.')
         paper_form.addRow('Humidity RH:', self._humidity)
 
         self._ofdm_nfft = QSpinBox()
         self._ofdm_nfft.setRange(16, 4096)
+        self._ofdm_nfft.setToolTip(
+            'FFT size for OFDM modulation.\n'
+            'Larger = more subcarriers, better spectral efficiency.\n'
+            'Common: 64, 128, 256, 512, 1024')
         paper_form.addRow('OFDM FFT:', self._ofdm_nfft)
 
         self._ofdm_qam = QSpinBox()
         self._ofdm_qam.setRange(2, 256)
+        self._ofdm_qam.setToolTip(
+            'QAM constellation order for OFDM subcarriers.\n'
+            'Higher = more bits/symbol but needs more SNR.\n'
+            '4-QAM (robust) | 16-QAM (balanced) | 64-QAM (high rate)')
         paper_form.addRow('QAM Order:', self._ofdm_qam)
 
         self._bfsk_f0 = QDoubleSpinBox()
         self._bfsk_f0.setRange(100, 50000)
         self._bfsk_f0.setSuffix(' Hz')
+        self._bfsk_f0.setToolTip(
+            'BFSK frequency for binary "0" (space).\n'
+            'Must be within the receiver BPF passband.')
         paper_form.addRow('BFSK f0:', self._bfsk_f0)
 
         self._bfsk_f1 = QDoubleSpinBox()
         self._bfsk_f1.setRange(100, 50000)
         self._bfsk_f1.setSuffix(' Hz')
+        self._bfsk_f1.setToolTip(
+            'BFSK frequency for binary "1" (mark).\n'
+            'Must be within the receiver BPF passband.')
         paper_form.addRow('BFSK f1:', self._bfsk_f1)
 
         self._notch_freq = QDoubleSpinBox()
         self._notch_freq.setRange(0, 1000)
         self._notch_freq.setSuffix(' Hz')
         self._notch_freq.setSpecialValueText('(disabled)')
+        self._notch_freq.setToolTip(
+            'Notch filter to reject ambient light flicker.\n'
+            'Set to 100 Hz (50 Hz mains) or 120 Hz (60 Hz mains).\n'
+            '0 = disabled')
         paper_form.addRow('Notch Filter:', self._notch_freq)
 
         self._amp_gain = QDoubleSpinBox()
         self._amp_gain.setRange(1.0, 1000.0)
         self._amp_gain.setDecimals(1)
+        self._amp_gain.setToolTip(
+            'Additional amplifier gain before demodulation.\n'
+            'Applied after TIA/INA stage.\n'
+            '1.0 = no extra gain')
         paper_form.addRow('Amp Gain:', self._amp_gain)
 
         right_layout.addWidget(self._paper_grp)
@@ -310,12 +459,12 @@ class SystemSetupTab(QWidget):
         self._engine_label.setText(engine.upper())
         if engine == 'python':
             self._engine_label.setStyleSheet(
-                'font-weight: bold; color: #4CAF50; padding: 2px 6px;'
-                'background: #E8F5E9; border-radius: 3px;')
+                f'font-weight: bold; color: {COLORS["success"]}; padding: 2px 6px;'
+                f'background: {COLORS["success_bg"]}; border-radius: 3px;')
         else:
             self._engine_label.setStyleSheet(
-                'font-weight: bold; color: #2196F3; padding: 2px 6px;'
-                'background: #E3F2FD; border-radius: 3px;')
+                f'font-weight: bold; color: {COLORS["info"]}; padding: 2px 6px;'
+                f'background: {COLORS["surface_alt"]}; border-radius: 3px;')
         self._modulation_label.setText(getattr(c, 'modulation', 'OOK'))
 
         # Paper-specific fields
@@ -333,6 +482,7 @@ class SystemSetupTab(QWidget):
 
         if c.preset_name:
             self._set_combo(self._preset_combo, c.preset_name)
+        self._update_preset_desc(c.preset_name or '(Custom)')
 
         self._building = False
         self._recalculate()
@@ -388,9 +538,11 @@ class SystemSetupTab(QWidget):
 
     def _recalculate(self):
         self._quick_info.update_from_config(self._config)
+        self._warnings.update_from_config(self._config)
 
     def _on_preset_changed(self, name):
         if self._building or name == '(Custom)':
+            self._update_preset_desc(name)
             return
         try:
             self._config = SystemConfig.from_preset(name)
@@ -398,6 +550,17 @@ class SystemSetupTab(QWidget):
             self.config_changed.emit(self._config)
         except Exception as e:
             QMessageBox.warning(self, 'Preset Error', str(e))
+
+    def _update_preset_desc(self, name):
+        """Update the preset description card."""
+        info = _PRESET_INFO.get(name)
+        if info:
+            title, desc = info
+            self._preset_desc.setText(f'<b>{title}</b><br>{desc}')
+        elif name == '(Custom)':
+            self._preset_desc.setText('Custom configuration — adjust parameters manually')
+        else:
+            self._preset_desc.setText(f'Preset: {name}')
 
     def _load_file(self):
         path, _ = QFileDialog.getOpenFileName(
