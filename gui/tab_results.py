@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+from gui.theme import COLORS
 from gui.widgets import MplCanvas
 from cosim.raw_parser import LTSpiceRawParser
 
@@ -47,7 +48,8 @@ class ResultsTab(QWidget):
         wf_layout.addWidget(self._wf_canvas)
         self._wf_placeholder = QLabel('Run simulation first to see waveforms')
         self._wf_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._wf_placeholder.setStyleSheet('font-size: 14px; color: #999;')
+        self._wf_placeholder.setStyleSheet(
+            f'font-size: 14px; color: {COLORS["text_dim"]};')
         wf_layout.addWidget(self._wf_placeholder)
         self._subtabs.addTab(self._waveforms_tab, 'Waveforms')
 
@@ -271,7 +273,8 @@ class ResultsTab(QWidget):
                 except KeyError:
                     axes[i].text(0.5, 0.5, f'{trace_name}\nnot found',
                                  ha='center', va='center',
-                                 transform=axes[i].transAxes, fontsize=9, color='gray')
+                                 transform=axes[i].transAxes, fontsize=9,
+                                 color=COLORS['text_dim'])
         else:
             # Fallback: show TX/Channel PWL data
             tx = self._results.get('TX')
@@ -305,7 +308,8 @@ class ResultsTab(QWidget):
             for i in range(2, len(axes)):
                 axes[i].text(0.5, 0.5, 'Run RX simulation\nfor SPICE results',
                              ha='center', va='center',
-                             transform=axes[i].transAxes, fontsize=9, color='#999')
+                             transform=axes[i].transAxes, fontsize=9,
+                             color=COLORS['text_dim'])
 
         self._wf_canvas.fig.tight_layout()
         self._wf_canvas.draw()
@@ -372,7 +376,9 @@ class ResultsTab(QWidget):
                      ha='center', va='center',
                      transform=axes[4].transAxes, fontsize=10,
                      family='monospace',
-                     bbox=dict(boxstyle='round', facecolor='#e8f5e9', alpha=0.8))
+                     color=COLORS['text'],
+                     bbox=dict(boxstyle='round', facecolor=COLORS['success_bg'],
+                               edgecolor=COLORS['success'], alpha=0.8))
         axes[4].set_title('Results Summary', fontsize=9)
         axes[4].set_xticks([])
         axes[4].set_yticks([])
@@ -893,11 +899,13 @@ class ResultsTab(QWidget):
 
             status_item = QTableWidgetItem(status)
             if status == 'PASS':
-                status_item.setBackground(
-                    __import__('PyQt6.QtGui', fromlist=['QColor']).QColor('#c8e6c9'))
+                from PyQt6.QtGui import QColor
+                status_item.setBackground(QColor(COLORS['success_bg']))
+                status_item.setForeground(QColor(COLORS['success']))
             elif status == 'FAIL':
-                status_item.setBackground(
-                    __import__('PyQt6.QtGui', fromlist=['QColor']).QColor('#ffcdd2'))
+                from PyQt6.QtGui import QColor
+                status_item.setBackground(QColor(COLORS['error_bg']))
+                status_item.setForeground(QColor(COLORS['error']))
             self._val_table.setItem(i, 4, status_item)
 
         summary = f'Validation: {n_pass}/{n_total} passed'

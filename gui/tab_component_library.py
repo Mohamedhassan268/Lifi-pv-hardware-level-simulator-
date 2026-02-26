@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from components import COMPONENT_REGISTRY, get_component
+from gui.theme import COLORS
 from gui.widgets import MplCanvas
 
 
@@ -145,8 +146,9 @@ class ComponentLibraryTab(QWidget):
             self._draw_mosfet(ax, comp.name)
         else:
             ax.text(0, 0, comp.name, ha='center', va='center',
-                    fontsize=14, fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.5', fc='#E8E8E8', ec='black'))
+                    fontsize=14, fontweight='bold', color=COLORS['text'],
+                    bbox=dict(boxstyle='round,pad=0.5',
+                              fc=COLORS['surface'], ec=COLORS['accent']))
 
         self._canvas.draw()
 
@@ -188,7 +190,7 @@ class ComponentLibraryTab(QWidget):
 
         # Component name
         ax.text(0, -1.4, name, ha='center', va='top', fontsize=11,
-                fontweight='bold', color='#333333')
+                fontweight='bold', color=COLORS['text'])
 
     def _draw_photodiode(self, ax, name):
         """Draw a photodiode symbol."""
@@ -218,7 +220,7 @@ class ComponentLibraryTab(QWidget):
         ax.text(0.15, -1.15, 'A', fontsize=10, fontweight='bold', color=clr)
 
         ax.text(0, -1.4, name, ha='center', va='top', fontsize=11,
-                fontweight='bold', color='#333333')
+                fontweight='bold', color=COLORS['text'])
 
     def _draw_led(self, ax, name):
         """Draw an LED symbol."""
@@ -248,7 +250,7 @@ class ComponentLibraryTab(QWidget):
         ax.text(0.15, -1.15, 'K', fontsize=10, fontweight='bold', color=clr)
 
         ax.text(0, -1.4, name, ha='center', va='top', fontsize=11,
-                fontweight='bold', color='#333333')
+                fontweight='bold', color=COLORS['text'])
 
     def _draw_amplifier(self, ax, name):
         """Draw an op-amp / amplifier triangle symbol."""
@@ -274,12 +276,12 @@ class ComponentLibraryTab(QWidget):
                 ha='center', va='center', color=clr)
 
         # Power rails (V+ and V-)
-        ax.plot([-0.1, -0.1], [0.45, 0.85], color='#888', lw=1.2,
+        ax.plot([-0.1, -0.1], [0.45, 0.85], color=COLORS['text_dim'], lw=1.2,
                 linestyle='--')
-        ax.plot([-0.1, -0.1], [-0.45, -0.85], color='#888', lw=1.2,
+        ax.plot([-0.1, -0.1], [-0.45, -0.85], color=COLORS['text_dim'], lw=1.2,
                 linestyle='--')
-        ax.text(-0.1, 0.95, 'V+', fontsize=9, ha='center', color='#888')
-        ax.text(-0.1, -0.95, 'V-', fontsize=9, ha='center', color='#888')
+        ax.text(-0.1, 0.95, 'V+', fontsize=9, ha='center', color=COLORS['text_dim'])
+        ax.text(-0.1, -0.95, 'V-', fontsize=9, ha='center', color=COLORS['text_dim'])
 
         # Terminal labels
         ax.text(-1.5, 0.35, 'IN+', fontsize=9, ha='right', va='center',
@@ -290,7 +292,7 @@ class ComponentLibraryTab(QWidget):
                 color=clr)
 
         ax.text(0, -1.3, name, ha='center', va='top', fontsize=11,
-                fontweight='bold', color='#333333')
+                fontweight='bold', color=COLORS['text'])
 
     def _draw_comparator(self, ax, name):
         """Draw a comparator symbol (similar to op-amp but with digital output)."""
@@ -329,7 +331,7 @@ class ComponentLibraryTab(QWidget):
                 color=clr)
 
         ax.text(0, -1.3, name, ha='center', va='top', fontsize=11,
-                fontweight='bold', color='#333333')
+                fontweight='bold', color=COLORS['text'])
 
     def _draw_mosfet(self, ax, name):
         """Draw an N-channel MOSFET symbol."""
@@ -376,7 +378,7 @@ class ComponentLibraryTab(QWidget):
         ax.fill(bd_x, bd_y, fc=clr, ec=clr, lw=0.8, alpha=0.4)
 
         ax.text(0, -1.4, name, ha='center', va='top', fontsize=11,
-                fontweight='bold', color='#333333')
+                fontweight='bold', color=COLORS['text'])
 
 
 # Matplotlib Circle patch helper

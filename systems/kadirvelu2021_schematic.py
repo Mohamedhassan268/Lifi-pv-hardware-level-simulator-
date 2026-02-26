@@ -42,6 +42,7 @@ except ImportError:
     print("SchemDraw not installed. Run: pip install schemdraw")
 
 from systems.kadirvelu2021 import KadirveluParams
+from systems.schematic_style import create_styled_drawing
 
 
 def _check_schemdraw():
@@ -66,14 +67,13 @@ def draw_solar_cell_detailed(filename=None, show=False, params=None):
 
     p = params or KadirveluParams()
 
-    d = schemdraw.Drawing()
-    d.config(unit=3, fontsize=10)
+    d = create_styled_drawing(unit=3, fontsize=10)
 
     # Title
     d += elm.Label().at((3, 5)).label(
         'Solar Cell Equivalent Circuit (KXOB25-04X3F)', fontsize=12)
     d += elm.Label().at((3, 4.5)).label(
-        f'Kadirvelu 2021 — GaAs, Area = {p.SC_AREA_CM2} cm²', fontsize=9)
+        f'Kadirvelu 2021 - GaAs, Area = {p.SC_AREA_CM2} cm2', fontsize=9)
 
     # Top rail (anode_int)
     y_top = 3.0
@@ -82,7 +82,7 @@ def draw_solar_cell_detailed(filename=None, show=False, params=None):
     # Photocurrent source
     d += elm.Dot().at((0.5, y_top))
     d += elm.SourceI().down().length(2.5).label(
-        f'$I_{{ph}}$\n{p.SC_IPH_uA} µA', loc='left').reverse()
+        f'$I_{{ph}}$\n{p.SC_IPH_uA} uA', loc='left').reverse()
     d += elm.Dot().at((0.5, y_bot))
 
     # Junction capacitance
@@ -99,7 +99,7 @@ def draw_solar_cell_detailed(filename=None, show=False, params=None):
     d += elm.Dot()
     rsh_x = 3.5
     d += elm.Resistor().down().length(2.5).label(
-        f'$R_{{sh}}$\n{p.SC_RSH_kOhm} kΩ', loc='right')
+        f'$R_{{sh}}$\n{p.SC_RSH_kOhm} kOhm', loc='right')
     d += elm.Dot()
     d += elm.Line().left().length(1.5)
 
@@ -113,7 +113,7 @@ def draw_solar_cell_detailed(filename=None, show=False, params=None):
 
     # Series resistance (Rs) to output
     d += elm.Line().at((diode_x, y_top)).right().length(0.5)
-    d += elm.Resistor().right().label('$R_s$\n2.5 Ω', loc='top')
+    d += elm.Resistor().right().label('$R_s$\n2.5 Ohm', loc='top')
     rs_out = d.here
     d += elm.Dot().label('$V_{sc}$ (+)', loc='right')
 
@@ -127,7 +127,7 @@ def draw_solar_cell_detailed(filename=None, show=False, params=None):
 
     # Parameters box
     d += elm.Label().at((0, -0.5)).label(
-        f'$R_λ$ = {p.SC_RESPONSIVITY} A/W @ 530nm  |  '
+        f'R = {p.SC_RESPONSIVITY} A/W @ 530nm  |  '
         f'$V_{{oc}}$ = 2.26 V  |  $I_{{sc}}$ = 78.9 mA',
         fontsize=8, halign='left')
 
@@ -153,8 +153,7 @@ def draw_ina322_detailed(filename=None, show=False, params=None):
     p = params or KadirveluParams()
     gain = 5 + 5 * (p.INA_R1 / p.INA_R2)
 
-    d = schemdraw.Drawing()
-    d.config(unit=3, fontsize=10)
+    d = create_styled_drawing(unit=3, fontsize=10)
 
     # Title
     d += elm.Label().at((3, 5)).label(
@@ -178,8 +177,8 @@ def draw_ina322_detailed(filename=None, show=False, params=None):
 
     # R1, R2 annotation
     d += elm.Label().at((4, 1.5)).label(
-        f'$R_1$ = {p.INA_R1/1e3:.0f} kΩ\n$R_2$ = {p.INA_R2/1e3:.0f} kΩ\n'
-        f'Gain = 5 + 5×($R_1$/$R_2$) = {gain:.1f}\n'
+        f'$R_1$ = {p.INA_R1/1e3:.0f} kOhm\n$R_2$ = {p.INA_R2/1e3:.0f} kOhm\n'
+        f'Gain = 5 + 5x($R_1$/$R_2$) = {gain:.1f}\n'
         f'GBW = {p.INA_GBW_kHz} kHz\n'
         f'$f_{{3dB}}$ = {p.INA_GBW_kHz*1e3/gain:.0f} Hz',
         fontsize=8, halign='left')
@@ -209,8 +208,7 @@ def draw_bpf_detailed(filename=None, show=False, params=None):
     f_hp = 1 / (2 * np.pi * p.BPF_RHP * p.BPF_CHP_pF * 1e-12)
     f_lp = 1 / (2 * np.pi * p.BPF_RLP * p.BPF_CLF_nF * 1e-9)
 
-    d = schemdraw.Drawing()
-    d.config(unit=2.5, fontsize=9)
+    d = create_styled_drawing(unit=2.5, fontsize=9)
 
     # Title
     d += elm.Label().at((6, 5.5)).label(
@@ -233,12 +231,12 @@ def draw_bpf_detailed(filename=None, show=False, params=None):
 
     # Rhp to Vref
     d += elm.Resistor().down().length(2).label(
-        f'$R_{{HP}}$\n{p.BPF_RHP/1e3:.0f} kΩ', loc='left')
+        f'$R_{{HP}}$\n{p.BPF_RHP/1e3:.0f} kOhm', loc='left')
     d += elm.Dot().label('$V_{ref}$ 1.65V', loc='bottom', fontsize=8)
 
     # Rin
     d += elm.Line().at(hp1).right().length(0.3)
-    d += elm.Resistor().right().label(f'$R_{{in}}$\n{p.BPF_RLP/1e3:.0f} kΩ', loc='top')
+    d += elm.Resistor().right().label(f'$R_{{in}}$\n{p.BPF_RLP/1e3:.0f} kOhm', loc='top')
     inn1 = d.here
     d += elm.Dot()
 
@@ -249,7 +247,7 @@ def draw_bpf_detailed(filename=None, show=False, params=None):
     d += elm.Line().at(inn1).up().length(0.8)
     fb1_start = d.here
     d += elm.Resistor().right().length(2.5).label(
-        f'$R_{{fb}}$ {p.BPF_RLP/1e3:.0f}kΩ', loc='top')
+        f'$R_{{fb}}$ {p.BPF_RLP/1e3:.0f}kOhm', loc='top')
     fb1_end = d.here
 
     # Feedback Cfb (parallel, above)
@@ -281,12 +279,12 @@ def draw_bpf_detailed(filename=None, show=False, params=None):
 
     # Rhp to Vref
     d += elm.Resistor().down().length(2).label(
-        f'$R_{{HP}}$\n{p.BPF_RHP/1e3:.0f} kΩ', loc='left')
+        f'$R_{{HP}}$\n{p.BPF_RHP/1e3:.0f} kOhm', loc='left')
     d += elm.Dot().label('$V_{ref}$', loc='bottom', fontsize=8)
 
     # Rin
     d += elm.Line().at(hp2).right().length(0.3)
-    d += elm.Resistor().right().label(f'$R_{{in}}$\n{p.BPF_RLP/1e3:.0f}kΩ', loc='top')
+    d += elm.Resistor().right().label(f'$R_{{in}}$\n{p.BPF_RLP/1e3:.0f}kOhm', loc='top')
     inn2 = d.here
     d += elm.Dot()
 
@@ -296,7 +294,7 @@ def draw_bpf_detailed(filename=None, show=False, params=None):
     # Feedback
     d += elm.Line().at(inn2).up().length(0.8)
     fb2_start = d.here
-    d += elm.Resistor().right().length(2.5).label(f'$R_{{fb}}$ {p.BPF_RLP/1e3:.0f}kΩ', loc='top')
+    d += elm.Resistor().right().length(2.5).label(f'$R_{{fb}}$ {p.BPF_RLP/1e3:.0f}kOhm', loc='top')
     fb2_end = d.here
 
     d += elm.Line().at(fb2_start).up().length(0.5)
@@ -329,8 +327,7 @@ def draw_comparator_detailed(filename=None, show=False, params=None):
     if not _check_schemdraw():
         return None
 
-    d = schemdraw.Drawing()
-    d.config(unit=3, fontsize=10)
+    d = create_styled_drawing(unit=3, fontsize=10)
 
     d += elm.Label().at((2.5, 4)).label(
         'TLV7011 Comparator (Data Recovery)', fontsize=12)
@@ -377,13 +374,12 @@ def draw_dcdc_detailed(filename=None, show=False, params=None):
 
     p = params or KadirveluParams()
 
-    d = schemdraw.Drawing()
-    d.config(unit=3, fontsize=10)
+    d = create_styled_drawing(unit=3, fontsize=10)
 
     d += elm.Label().at((3.5, 5)).label(
         'Boost DC-DC Converter', fontsize=12)
     d += elm.Label().at((3.5, 4.5)).label(
-        f'$f_{{sw}}$ = {p.DCDC_FSW_kHz} kHz | η = 67% (@ 50 kHz)',
+        f'f_sw = {p.DCDC_FSW_kHz} kHz | eff = 67% (@ 50 kHz)',
         fontsize=9)
 
     # Input from solar cell
@@ -392,12 +388,12 @@ def draw_dcdc_detailed(filename=None, show=False, params=None):
     # Input capacitor (down to ground)
     d += elm.Line().down().length(0.5)
     d += elm.Capacitor().down().length(1.5).label(
-        f'$C_P$\n{p.DCDC_CP_uF} µF', loc='left')
+        f'$C_P$\n{p.DCDC_CP_uF} uF', loc='left')
     d += elm.Ground()
 
     # Main path: inductor
     d += elm.Line().at((0, 3)).right().length(0.5)
-    d += elm.Inductor2().right().label(f'L\n{p.DCDC_L_uH} µH', loc='top')
+    d += elm.Inductor2().right().label(f'L\n{p.DCDC_L_uH} uH', loc='top')
     sw_node = d.here
     d += elm.Dot()
 
@@ -420,14 +416,14 @@ def draw_dcdc_detailed(filename=None, show=False, params=None):
     # Output capacitor
     d += elm.Line().down().length(0.3)
     d += elm.Capacitor().down().length(1.5).label(
-        f'$C_L$\n{p.DCDC_CL_uF} µF', loc='right')
+        f'$C_L$\n{p.DCDC_CL_uF} uF', loc='right')
     d += elm.Ground()
 
     # Load resistor
     d += elm.Line().at(out_node).right().length(1.5)
     d += elm.Dot()
     d += elm.Resistor().down().length(1.8).label(
-        f'$R_{{load}}$\n{p.DCDC_RLOAD_kOhm} kΩ', loc='right')
+        f'$R_{{load}}$\n{p.DCDC_RLOAD_kOhm} kOhm', loc='right')
     d += elm.Ground()
 
     # Output label
@@ -455,8 +451,7 @@ def draw_tx_driver_detailed(filename=None, show=False, params=None):
 
     p = params or KadirveluParams()
 
-    d = schemdraw.Drawing()
-    d.config(unit=3, fontsize=10)
+    d = create_styled_drawing(unit=3, fontsize=10)
 
     d += elm.Label().at((3, 5)).label(
         'LED Transmitter Driver', fontsize=12)
@@ -468,7 +463,7 @@ def draw_tx_driver_detailed(filename=None, show=False, params=None):
     d += elm.SourceSin().right().label('OOK\nSignal', loc='top', fontsize=8)
 
     # Driver resistance
-    d += elm.Resistor().right().label(f'$R_e$\n{p.LED_DRIVER_RE} Ω', loc='top')
+    d += elm.Resistor().right().label(f'$R_e$\n{p.LED_DRIVER_RE} Ohm', loc='top')
 
     # MOSFET gate drive point
     gate_pt = d.here
@@ -496,7 +491,7 @@ def draw_tx_driver_detailed(filename=None, show=False, params=None):
     # Lens annotation
     d += elm.Label().at((gate_pt[0] + 2.5, gate_pt[1] + 2)).label(
         f'Fraen Lens\n$T$ = {p.LENS_TRANSMITTANCE}\n'
-        f'θ½ = {p.LED_HALF_ANGLE_DEG}°\n'
+        f'Half-angle = {p.LED_HALF_ANGLE_DEG} deg\n'
         f'$P_e$ = {p.LED_RADIATED_POWER_mW} mW',
         fontsize=8, halign='left')
 
@@ -512,14 +507,15 @@ def draw_tx_driver_detailed(filename=None, show=False, params=None):
 # 7. FULL SYSTEM BLOCK DIAGRAM (DETAILED)
 # =============================================================================
 
-def draw_full_system_detailed(filename='kadirvelu2021_system.png', show=False,
+def draw_full_system_detailed(filename=None, show=False,
                                params=None):
     """
     Draw complete system with TX, channel, and RX paths.
 
-    Layout:
-        TX (left) -> Channel -> RX (right)
-        RX splits: Data path (top) and Power path (bottom)
+    Layout (3 rows with clear vertical separation):
+        Row 1 (y=10):  TX -> Channel -> Solar Cell
+        Row 2 (y=14):  Data path:  Rs -> INA322 -> BPF1 -> BPF2 -> Comparator -> Out
+        Row 3 (y=6):   Power path: DC-DC Boost -> Load
     """
     if not _check_schemdraw():
         return None
@@ -527,136 +523,122 @@ def draw_full_system_detailed(filename='kadirvelu2021_system.png', show=False,
     p = params or KadirveluParams()
     Gop = p.optical_channel_gain()
 
-    d = schemdraw.Drawing()
-    d.config(unit=2, fontsize=8)
+    d = create_styled_drawing(unit=3, fontsize=10)
+
+    # Y coordinates for 3 rows (wide vertical separation)
+    y_data = 18          # Data path row (top)
+    y_main = 10          # Main TX->Channel->SC row (middle)
+    y_power = 2          # Power path row (bottom)
 
     # =========================================================================
-    # TITLE
+    # TITLE (well above everything)
     # =========================================================================
-    d += elm.Label().at((7, 8)).label(
-        'Kadirvelu 2021 — Complete LiFi-PV System', fontsize=14)
-    d += elm.Label().at((7, 7.4)).label(
-        '"A Circuit for Simultaneous Reception of Data and Power '
-        'Using a Solar Cell"', fontsize=8)
+    d += elm.Label().at((10, 23)).label(
+        'Kadirvelu 2021 - Complete LiFi-PV System', fontsize=15)
+    d += elm.Label().at((10, 22)).label(
+        'OOK @ 5 kbps  |  d = 32.5 cm  |  GaAs Solar Cell', fontsize=10)
 
     # =========================================================================
-    # TRANSMITTER
+    # ROW 1: TRANSMITTER -> CHANNEL -> SOLAR CELL (middle row)
     # =========================================================================
-    d += elm.Label().at((1, 6.5)).label('── TX ──', fontsize=10, color='blue')
 
-    d += elm.Dot().at((0, 5.5))
-    d += elm.SourceSin().right().label('$V_{mod}$', loc='top', fontsize=7)
-    d += elm.Resistor().right().label(f'$R_e$\n{p.LED_DRIVER_RE}Ω', loc='top', fontsize=7)
+    # Section labels (placed well above circuit)
+    d += elm.Label().at((5, y_main + 4)).label(
+        'TRANSMITTER', fontsize=13)
+
+    # OOK Signal source
+    d += elm.SourceSin().at((0, y_main)).right().length(2.5)
+    d += elm.Label().at((1.2, y_main - 1.5)).label('OOK', fontsize=9)
+
+    # Driver + LED block
+    d += elm.Line().right().length(1.5)
+    d += elm.RBox(w=4.0, h=1.5).label('Driver\n+ LED', fontsize=9)
+    d += elm.Line().right().length(2.0)
     d += elm.Dot()
 
-    # LED driver block
-    d += elm.Line().right().length(0.3)
-    d += elm.RBox(w=1.2, h=0.6).label('ADA4891\n+BSD235N', fontsize=6)
-    d += elm.Line().right().length(0.3)
+    # Optical channel arrow
+    ch_start = d.here
+    d += elm.Arrow().right().length(7).color('red')
+    d += elm.Label().at((ch_start[0] + 3.5, y_main - 1.5)).label(
+        f'd = {p.DISTANCE_M*100:.0f} cm  |  G = {Gop:.2e}', fontsize=8, color='red')
 
-    # LED
-    d += elm.LED().right().label('LXM5\n+Lens', loc='bottom', fontsize=6)
-
-    # =========================================================================
-    # OPTICAL CHANNEL
-    # =========================================================================
-    d += elm.Arrow().right().length(2).color('red').label(
-        f'Optical Channel\n$G_{{op}}$ = {Gop:.2e}\n'
-        f'd = {p.DISTANCE_M*100:.0f} cm',
-        loc='top', fontsize=7, color='red')
-
-    rx_in = d.here
-
-    # =========================================================================
-    # RECEIVER — SOLAR CELL
-    # =========================================================================
-    d += elm.Label().at((9, 6.5)).label('── RX ──', fontsize=10, color='green')
-
-    d += elm.Dot().at(rx_in)
-    d += elm.RBox(w=1.5, h=0.8).label(
-        f'Solar Cell\nKXOB25\n$R_λ$={p.SC_RESPONSIVITY} A/W', fontsize=6)
+    # Solar cell
+    d += elm.Line().right().length(2.0)
+    d += elm.RBox(w=3.5, h=1.5).label('KXOB25\nSolar Cell', fontsize=9)
     sc_out = d.here
     d += elm.Dot()
 
-    # =========================================================================
-    # DATA PATH (upper branch)
-    # =========================================================================
-    d += elm.Label().at((12, 6.5)).label('Data Path', fontsize=8, color='purple')
+    d += elm.Label().at((sc_out[0] + 2, y_main + 4)).label(
+        'RECEIVER', fontsize=13)
 
-    # Branch up
-    d += elm.Line().at(sc_out).up().length(0.8)
+    # =========================================================================
+    # Vertical branches from solar cell
+    # =========================================================================
+    d += elm.Line().at(sc_out).up().length(y_data - y_main)
     d += elm.Dot()
-    d += elm.Line().right().length(0.2)
+    data_branch = d.here
 
-    # Rsense
-    d += elm.Resistor().right().label(f'$R_s$\n{p.R_SENSE}Ω', loc='top', fontsize=6)
-    d += elm.Line().right().length(0.2)
+    d += elm.Line().at(sc_out).down().length(y_main - y_power)
+    d += elm.Dot()
+    power_branch = d.here
+
+    # =========================================================================
+    # ROW 2: DATA PATH (top row, well separated)
+    # =========================================================================
+    d += elm.Label().at((data_branch[0] + 16, y_data + 2.5)).label(
+        'DATA PATH', fontsize=12, color='#4B0082')
+
+    # Sense resistor
+    d += elm.Line().at(data_branch).right().length(1.0)
+    d += elm.Resistor().right().length(3).label('Rs', loc='bottom', fontsize=8)
+    d += elm.Line().right().length(2.0)
 
     # INA322
-    d += elm.RBox(w=1.2, h=0.6).label(
-        f'INA322\n{p.INA_GAIN_DB:.0f}dB', fontsize=6)
-    d += elm.Line().right().length(0.2)
+    d += elm.RBox(w=3.0, h=1.5).label('INA322\n40 dB', fontsize=8)
+    d += elm.Line().right().length(2.0)
 
     # BPF Stage 1
-    d += elm.RBox(w=1, h=0.6).label('BPF\n×1', fontsize=6)
-    d += elm.Line().right().length(0.2)
+    d += elm.RBox(w=2.5, h=1.5).label('BPF 1', fontsize=8)
+    d += elm.Line().right().length(2.0)
 
     # BPF Stage 2
-    d += elm.RBox(w=1, h=0.6).label('BPF\n×2', fontsize=6)
-    d += elm.Line().right().length(0.2)
+    d += elm.RBox(w=2.5, h=1.5).label('BPF 2', fontsize=8)
+    d += elm.Line().right().length(2.0)
 
     # Comparator
-    d += elm.RBox(w=1, h=0.6).label('TLV7011\nCOMP', fontsize=6)
-    d += elm.Line().right().length(0.3)
-    d += elm.Dot().label('$d_{out}$', loc='right', fontsize=8)
+    d += elm.RBox(w=3.0, h=1.5).label('TLV7011', fontsize=8)
+    d += elm.Line().right().length(1.5)
+    d += elm.Arrow().right().length(2.0)
+    d += elm.Label().at((d.here[0] + 1.0, y_data)).label(
+        'Data Out', fontsize=10)
 
     # =========================================================================
-    # POWER PATH (lower branch)
+    # ROW 3: POWER PATH (bottom row, well separated)
     # =========================================================================
-    d += elm.Label().at((12, 3.5)).label('Power Path', fontsize=8, color='orange')
+    d += elm.Label().at((power_branch[0] + 10, y_power + 2.5)).label(
+        'POWER PATH', fontsize=12, color='#B8860B')
 
-    d += elm.Line().at(sc_out).down().length(0.8)
-    d += elm.Dot()
-    d += elm.Line().right().length(0.2)
-
-    # DC-DC block
-    d += elm.RBox(w=1.5, h=0.8).label(
-        f'DC-DC\nBoost\n$f_{{sw}}$={p.DCDC_FSW_kHz}kHz', fontsize=6)
-    d += elm.Line().right().length(0.3)
+    d += elm.Line().at(power_branch).right().length(2.0)
+    d += elm.RBox(w=3.5, h=1.5).label('DC-DC\nBoost', fontsize=8)
+    d += elm.Line().right().length(3.0)
     d += elm.Dot()
     dcdc_out = d.here
+    d += elm.Label().at((dcdc_out[0], dcdc_out[1] + 1.2)).label(
+        'Vout', fontsize=10)
 
-    # Load
-    d += elm.Line().right().length(0.5)
-    d += elm.Resistor().down().length(1.2).label(
-        f'$R_L$\n{p.DCDC_RLOAD_kOhm}kΩ', fontsize=6)
+    d += elm.Line().at(dcdc_out).right().length(5.0)
+    d += elm.Resistor().down().length(3).label(
+        f'RL  {p.DCDC_RLOAD_kOhm}k', loc='right')
     d += elm.Ground()
 
-    # Vout label
-    d += elm.Dot().at(dcdc_out).label('$V_{out}$', loc='top')
-
     # =========================================================================
-    # PARAMETER BOXES
+    # KEY PARAMETERS (at very bottom)
     # =========================================================================
-    d += elm.Label().at((0.5, 2.5)).label(
-        '┌─────────────────────────────────┐\n'
-        '│ System Parameters:              │\n'
-        f'│ • $C_j$ = {p.SC_CJ_nF} nF                │\n'
-        f'│ • $R_{{sh}}$ = {p.SC_RSH_kOhm} kΩ             │\n'
-        '│ • BPF: 700 Hz – 10 kHz         │\n'
-        f'│ • INA gain: {p.INA_GAIN_DB:.0f} dB              │\n'
-        '└─────────────────────────────────┘',
-        fontsize=7, halign='left')
-
-    d += elm.Label().at((9, 2.5)).label(
-        '┌─────────────────────────────────┐\n'
-        '│ Validation Targets:             │\n'
-        f'│ • $P_{{harv}}$ = {p.TARGET_HARVESTED_POWER_uW} µW            │\n'
-        f'│ • BER = {p.TARGET_BER:.3e}            │\n'
-        f'│ • Noise = {p.TARGET_NOISE_RMS_mV} mV$_{{rms}}$        │\n'
-        '│ • η(50kHz) = 67%               │\n'
-        '└─────────────────────────────────┘',
-        fontsize=7, halign='left')
+    d += elm.Label().at((1, -2)).label(
+        f'Cj={p.SC_CJ_nF}nF  |  Rsh={p.SC_RSH_kOhm}kOhm  |  '
+        f'BPF: 700Hz-10kHz  |  INA: {p.INA_GAIN_DB:.0f}dB  |  '
+        f'BER={p.TARGET_BER:.3e}',
+        fontsize=8, halign='left')
 
     if filename:
         d.save(filename)
@@ -681,8 +663,7 @@ def draw_channel_model(filename=None, show=False, params=None):
     m = p.lambertian_order()
     Gop = p.optical_channel_gain()
 
-    d = schemdraw.Drawing()
-    d.config(unit=3, fontsize=10)
+    d = create_styled_drawing(unit=3, fontsize=10)
 
     d += elm.Label().at((3, 5)).label(
         'Optical Channel Model (Lambertian LOS)', fontsize=12)
@@ -694,7 +675,7 @@ def draw_channel_model(filename=None, show=False, params=None):
     # Channel arrow
     d += elm.Arrow().right().length(3).color('red').label(
         f'r = {p.DISTANCE_M*100:.1f} cm\n'
-        f'θ = {p.THETA_DEG}°, β = {p.BETA_DEG}°',
+        f'theta = {p.THETA_DEG} deg, beta = {p.BETA_DEG} deg',
         loc='top', fontsize=9, color='red')
 
     # RX point
@@ -703,9 +684,9 @@ def draw_channel_model(filename=None, show=False, params=None):
 
     # Equations
     d += elm.Label().at((1, 1)).label(
-        f'$m$ = −ln(2)/ln(cos(α½)) = {m:.2f}\n'
-        f'$G_{{op}}$ = (m+1)/(2πr²) · cos$^m$(θ) · cos(β) · A = {Gop:.4e}\n'
-        f'$A_{{rx}}$ = {p.SC_AREA_CM2} cm²  |  α½ = {p.LED_HALF_ANGLE_DEG}°',
+        f'm = -ln(2)/ln(cos(a_half)) = {m:.2f}\n'
+        f'G_op = (m+1)/(2*pi*r^2) * cos^m(theta) * cos(beta) * A = {Gop:.4e}\n'
+        f'A_rx = {p.SC_AREA_CM2} cm2  |  a_half = {p.LED_HALF_ANGLE_DEG} deg',
         fontsize=9, halign='left')
 
     if filename:
@@ -737,7 +718,7 @@ def draw_bandpass_filter(filename=None, show=False):
     return draw_bpf_detailed(filename, show)
 
 def draw_receiver_detail(filename=None, show=False):
-    """Legacy wrapper — now redirects to full system."""
+    """Legacy wrapper - now redirects to full system."""
     return draw_full_system_detailed(filename, show)
 
 

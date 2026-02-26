@@ -5,9 +5,29 @@ LiFi-PV Simulator CLI
 Usage:  python cli.py <command> [options]
 """
 
-import sys, os, argparse, numpy as np
+import sys, os, argparse, logging, numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# ── logging setup ───────────────────────────────────────────────────────
+def _setup_logging(verbose=False):
+    """Configure logging for CLI and all submodules."""
+    level = logging.DEBUG if verbose else logging.INFO
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workspace')
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, 'simulator.log')
+
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout) if verbose else logging.NullHandler(),
+        ],
+    )
+
+logger = logging.getLogger('lifi_pv')
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
@@ -183,11 +203,15 @@ def cmd_gui(args):
     """Launch the PyQt6 desktop GUI."""
     _header("LAUNCHING GUI")
     from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import QLocale
     from gui.main_window import MainWindow
 
     app = QApplication(sys.argv)
     app.setApplicationName('LiFi-PV Simulator')
     app.setStyle('Fusion')
+
+    # Force English (Latin) numerals regardless of system locale
+    QLocale.setDefault(QLocale(QLocale.Language.English, QLocale.Country.UnitedStates))
     window = MainWindow()
     window.show()
     window.raise_()
@@ -298,6 +322,8 @@ def build_parser():
     p = argparse.ArgumentParser(
         prog='lifi-pv',
         description='Hardware-Faithful LiFi-PV Simulator CLI')
+    p.add_argument('-v', '--verbose', action='store_true',
+                   help='Enable verbose logging to console')
     sub = p.add_subparsers(dest='command', help='command')
 
     # test
@@ -373,6 +399,9 @@ def build_parser():
 def main():
     parser = build_parser()
     args = parser.parse_args()
+
+    # Initialize logging (always logs to file, verbose adds console output)
+    _setup_logging(verbose=getattr(args, 'verbose', False))
 
     commands = {
         'test':       cmd_test,
