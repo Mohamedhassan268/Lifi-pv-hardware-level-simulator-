@@ -287,6 +287,8 @@ class OllamaClient:
         }
         if cpu_mode:
             options['num_gpu'] = 0
+        else:
+            options['num_gpu'] = 999  # Force all layers to GPU
 
         try:
             response = requests.post(

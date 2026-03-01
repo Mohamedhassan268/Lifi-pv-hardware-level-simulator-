@@ -283,15 +283,46 @@ class PaperReaderDialog(QDialog):
                         f'{len(models)} model(s) ready{vram_info}')
                     self._ollama_status.setStyleSheet(
                         f'color: {COLORS["success"]};')
+                    # VRAM estimates per model size tag (MB)
+                    vram_needed = {
+                        '0.5b': 800, '1.5b': 1500, '3b': 2500,
+                        '7b': 5500, '8b': 6000, '13b': 9000, '14b': 10000,
+                    }
                     # Update model combo with available models
                     current = self._ollama_model_combo.currentText()
                     self._ollama_model_combo.clear()
+                    best_gpu_model = None
                     for m in models:
-                        self._ollama_model_combo.addItem(m)
-                    # Restore selection or add default
-                    idx = self._ollama_model_combo.findText(current)
-                    if idx >= 0:
-                        self._ollama_model_combo.setCurrentIndex(idx)
+                        # Check if model fits in GPU
+                        size_tag = m.split(':')[-1] if ':' in m else ''
+                        needed = vram_needed.get(size_tag, 0)
+                        if vram and needed > vram:
+                            label = f'{m}  (CPU only - needs {needed} MB)'
+                        elif vram and needed > 0:
+                            label = f'{m}  (GPU - {needed} MB)'
+                            if best_gpu_model is None:
+                                best_gpu_model = m
+                        else:
+                            label = m
+                            if best_gpu_model is None:
+                                best_gpu_model = m
+                        self._ollama_model_combo.addItem(label, m)
+                    # Restore selection if it fits GPU, otherwise pick best GPU model
+                    restored = False
+                    for i in range(self._ollama_model_combo.count()):
+                        if self._ollama_model_combo.itemData(i) == current:
+                            # Check if saved model fits GPU
+                            size_tag = current.split(':')[-1] if ':' in current else ''
+                            needed = vram_needed.get(size_tag, 0)
+                            if not vram or needed <= vram:
+                                self._ollama_model_combo.setCurrentIndex(i)
+                                restored = True
+                            break
+                    if not restored and best_gpu_model:
+                        for i in range(self._ollama_model_combo.count()):
+                            if self._ollama_model_combo.itemData(i) == best_gpu_model:
+                                self._ollama_model_combo.setCurrentIndex(i)
+                                break
                 else:
                     self._ollama_status.setText(
                         f'No models - pull one first{vram_info}')
@@ -336,8 +367,11 @@ class PaperReaderDialog(QDialog):
         """Persist settings."""
         self._settings.setValue('paper_reader_backend',
                                 self._backend_combo.currentData())
-        self._settings.setValue('paper_reader_ollama_model',
-                                self._ollama_model_combo.currentText())
+        idx = self._ollama_model_combo.currentIndex()
+        model_name = self._ollama_model_combo.itemData(idx)
+        if not model_name:
+            model_name = self._ollama_model_combo.currentText()
+        self._settings.setValue('paper_reader_ollama_model', model_name)
         self._settings.setValue('gemini_api_key', self._key_edit.text().strip())
         if self._pdf_edit.text():
             self._settings.setValue(
@@ -384,7 +418,11 @@ class PaperReaderDialog(QDialog):
                     'Get one free at: https://aistudio.google.com/apikey')
                 return
         else:
-            ollama_model = self._ollama_model_combo.currentText().strip()
+            # Use itemData (actual model name) if available, fall back to text
+            idx = self._ollama_model_combo.currentIndex()
+            ollama_model = self._ollama_model_combo.itemData(idx)
+            if not ollama_model:
+                ollama_model = self._ollama_model_combo.currentText().strip()
             if not ollama_model:
                 QMessageBox.warning(self, 'No Model',
                     'Please select or enter an Ollama model name.\n\n'
