@@ -134,6 +134,13 @@ class MainWindow(QMainWindow):
         ltspice_act.triggered.connect(self._set_ltspice_path)
         tools_menu.addAction(ltspice_act)
 
+        tools_menu.addSeparator()
+
+        paper_reader_act = QAction('AI Paper Reader...', self)
+        paper_reader_act.setShortcut('Ctrl+Shift+P')
+        paper_reader_act.triggered.connect(self._show_paper_reader)
+        tools_menu.addAction(paper_reader_act)
+
         # Help menu
         help_menu = menubar.addMenu('Help')
 
@@ -290,6 +297,30 @@ class MainWindow(QMainWindow):
                     3000)
                 logger.info("Wizard applied preset: %s",
                             config.preset_name or 'Custom')
+
+    def _show_paper_reader(self):
+        """Open the AI Paper Reader dialog."""
+        from gui.dialog_paper_reader import PaperReaderDialog
+        dialog = PaperReaderDialog(self)
+        dialog.config_extracted.connect(self._on_paper_extracted)
+        dialog.exec()
+
+    def _on_paper_extracted(self, params: dict):
+        """Handle parameters extracted from a paper by the AI reader."""
+        try:
+            # Build config from extracted params, using defaults for missing fields
+            valid_fields = {f.name for f in self._config.__dataclass_fields__.values()}
+            filtered = {k: v for k, v in params.items() if k in valid_fields}
+            self._config = SystemConfig(**filtered)
+            self._tab_setup.set_config(self._config)
+            self.statusBar().showMessage(
+                f'AI Paper Reader: loaded {len(filtered)} parameters', 5000)
+            logger.info("Paper reader loaded %d parameters (preset=%s)",
+                         len(filtered), self._config.preset_name or 'Custom')
+        except Exception as e:
+            logger.error("Failed to apply AI-extracted params: %s", e)
+            QMessageBox.warning(self, 'Error',
+                f'Failed to apply extracted parameters:\n{e}')
 
     def _show_about(self):
         QMessageBox.about(
