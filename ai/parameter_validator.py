@@ -67,6 +67,52 @@ PARAMETER_BOUNDS = {
 
 VALID_MODULATIONS = {'OOK', 'OOK_Manchester', 'OFDM', 'BFSK', 'PWM_ASK'}
 
+# ── Simulation subsystem parameter groups ─────────────────────────────────────
+# Each group defines the params needed for that subsystem to work properly.
+
+SUBSYSTEM_PARAMS = {
+    'Transmitter': {
+        'led_radiated_power_mW', 'led_half_angle_deg',
+        'bias_current_A', 'modulation_depth', 'lens_transmittance',
+    },
+    'Channel': {
+        'distance_m', 'sc_area_cm2',
+    },
+    'Receiver': {
+        'sc_responsivity', 'sc_cj_nF', 'sc_rsh_kOhm',
+        'r_sense_ohm', 'ina_gain_dB',
+    },
+    'Signal': {
+        'data_rate_bps', 'modulation', 'n_bits',
+    },
+    'Filter': {
+        'bpf_f_low_Hz', 'bpf_f_high_Hz', 'bpf_stages',
+    },
+    'DC-DC': {
+        'dcdc_fsw_kHz', 'dcdc_l_uH', 'dcdc_cp_uF', 'dcdc_cl_uF', 'r_load_ohm',
+    },
+}
+
+# Modulation-specific parameters (only counted when that modulation is detected)
+MODULATION_SUBSYSTEMS = {
+    'OFDM': {
+        'OFDM config': {
+            'ofdm_nfft', 'ofdm_qam_order', 'ofdm_n_subcarriers',
+            'ofdm_cp_len', 'ofdm_sample_rate_hz',
+        },
+    },
+    'BFSK': {
+        'BFSK config': {
+            'bfsk_f0_hz', 'bfsk_f1_hz',
+        },
+    },
+    'PWM_ASK': {
+        'PWM-ASK config': {
+            'pwm_freq_hz', 'carrier_freq_hz',
+        },
+    },
+}
+
 # Parameters that are critical for simulation accuracy
 CRITICAL_PARAMS = {
     'distance_m', 'sc_area_cm2', 'sc_responsivity', 'sc_cj_nF',
@@ -199,6 +245,9 @@ def validate_parameters(params: dict, confidence: Optional[dict] = None) -> dict
             estimated_ratio = n_estimated / n_total
             score *= (1.0 - 0.3 * estimated_ratio)
 
+    # Assess simulation readiness
+    readiness = assess_simulation_readiness(params, confidence)
+
     result = {
         'valid': valid,
         'valid_count': len(valid),
@@ -208,12 +257,91 @@ def validate_parameters(params: dict, confidence: Optional[dict] = None) -> dict
         'missing_critical': missing_critical,
         'missing_important': missing_important,
         'score': round(score, 1),
+        'readiness': readiness,
     }
 
     logger.info("Validation: %d valid, %d warnings, %d errors, %d missing "
-                "(critical=%d, important=%d, score=%.1f%%)",
+                "(critical=%d, important=%d, score=%.1f%%, readiness=%s)",
                 len(valid), len(warnings), len(errors), len(missing),
-                len(missing_critical), len(missing_important), score)
+                len(missing_critical), len(missing_important), score,
+                readiness['decision'])
+    return result
+
+
+def assess_simulation_readiness(params: dict, confidence: Optional[dict] = None) -> dict:
+    """
+    Assess whether extracted parameters are sufficient for simulation.
+
+    Returns a readiness report with per-subsystem coverage, overall percentage,
+    and a decision: READY / ESTIMATE / HOLD.
+    """
+    confidence = confidence or {}
+
+    # Build the relevant subsystems based on detected modulation
+    subsystems = dict(SUBSYSTEM_PARAMS)
+    mod = params.get('modulation')
+    if mod and mod in MODULATION_SUBSYSTEMS:
+        subsystems.update(MODULATION_SUBSYSTEMS[mod])
+
+    # Evaluate each subsystem
+    subsystem_results = {}
+    total_found = 0
+    total_needed = 0
+    all_missing = []
+
+    for name, param_set in subsystems.items():
+        needed = len(param_set)
+        found = 0
+        missing = []
+        for p in sorted(param_set):
+            val = params.get(p)
+            if val is not None:
+                found += 1
+            else:
+                missing.append(p)
+        subsystem_results[name] = {
+            'found': found,
+            'needed': needed,
+            'pct': round(100 * found / needed, 1) if needed > 0 else 100.0,
+            'missing': missing,
+        }
+        total_found += found
+        total_needed += needed
+        all_missing.extend(missing)
+
+    overall_pct = round(100 * total_found / total_needed, 1) if total_needed > 0 else 0.0
+
+    # Check how many critical params are present
+    critical_missing = [p for p in CRITICAL_PARAMS if params.get(p) is None]
+    critical_present = len(CRITICAL_PARAMS) - len(critical_missing)
+    critical_pct = round(100 * critical_present / len(CRITICAL_PARAMS), 1)
+
+    # Decision logic
+    if overall_pct >= 80 and len(critical_missing) == 0:
+        decision = 'READY'
+        decision_label = 'Proceed to simulation'
+    elif overall_pct >= 50 or critical_pct >= 60:
+        decision = 'ESTIMATE'
+        decision_label = 'Estimate remaining parameters, then simulate'
+    else:
+        decision = 'HOLD'
+        decision_label = 'Too many parameters missing -- manual input required'
+
+    result = {
+        'decision': decision,
+        'decision_label': decision_label,
+        'overall_pct': overall_pct,
+        'found': total_found,
+        'needed': total_needed,
+        'critical_pct': critical_pct,
+        'critical_missing': critical_missing,
+        'subsystems': subsystem_results,
+        'missing_for_simulation': all_missing,
+    }
+
+    logger.info("Simulation readiness: %s (%.1f%% coverage, %d/%d params, "
+                "critical: %.0f%%)",
+                decision, overall_pct, total_found, total_needed, critical_pct)
     return result
 
 
@@ -307,9 +435,51 @@ def _cross_validate(params: dict) -> list:
     return warnings
 
 
+def _make_bar(found, needed, width=5):
+    """Create a text progress bar like [###--]."""
+    if needed == 0:
+        return '[' + '#' * width + ']'
+    filled = round(width * found / needed)
+    return '[' + '#' * filled + '-' * (width - filled) + ']'
+
+
 def format_validation_report(result: dict) -> str:
     """Format validation result into a readable text report."""
     lines = []
+
+    # ── Simulation Readiness section ──
+    readiness = result.get('readiness')
+    if readiness:
+        lines.append("=== Simulation Readiness ===")
+        decision = readiness['decision']
+        label = readiness['decision_label']
+        pct = readiness['overall_pct']
+        found = readiness['found']
+        needed = readiness['needed']
+        lines.append(f"Decision: {decision} -- {label}")
+        lines.append(f"Overall coverage: {pct:.0f}% ({found}/{needed} parameters found)")
+        lines.append(f"Critical params: {readiness['critical_pct']:.0f}% present")
+        lines.append("")
+
+        # Per-subsystem bars
+        for sub_name, sub in readiness['subsystems'].items():
+            bar = _make_bar(sub['found'], sub['needed'])
+            suffix = ''
+            if sub['found'] < sub['needed']:
+                suffix = '  <-- needs defaults'
+            lines.append(f"  {sub_name + ':':<16s} {sub['found']}/{sub['needed']}  "
+                         f"{bar} {sub['pct']:3.0f}%{suffix}")
+        lines.append("")
+
+        # Missing params for simulation
+        missing_sim = readiness.get('missing_for_simulation', [])
+        if missing_sim:
+            lines.append(f"Missing for simulation ({len(missing_sim)}):")
+            for p in missing_sim:
+                lines.append(f"  - {p}")
+            lines.append("")
+
+    # ── Original validation report ──
     lines.append(f"=== Parameter Validation Report (Score: {result['score']:.1f}%) ===\n")
 
     if result['errors']:

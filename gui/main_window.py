@@ -136,7 +136,7 @@ class MainWindow(QMainWindow):
 
         tools_menu.addSeparator()
 
-        paper_reader_act = QAction('AI Paper Reader...', self)
+        paper_reader_act = QAction('PaperLens...', self)
         paper_reader_act.setShortcut('Ctrl+Shift+P')
         paper_reader_act.triggered.connect(self._show_paper_reader)
         tools_menu.addAction(paper_reader_act)
@@ -299,7 +299,7 @@ class MainWindow(QMainWindow):
                             config.preset_name or 'Custom')
 
     def _show_paper_reader(self):
-        """Open the AI Paper Reader dialog."""
+        """Open the PaperLens dialog."""
         from gui.dialog_paper_reader import PaperReaderDialog
         dialog = PaperReaderDialog(self)
         dialog.config_extracted.connect(self._on_paper_extracted)
@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
             self._config = SystemConfig(**filtered)
             self._tab_setup.set_config(self._config)
             self.statusBar().showMessage(
-                f'AI Paper Reader: loaded {len(filtered)} parameters', 5000)
+                f'PaperLens: loaded {len(filtered)} parameters', 5000)
             logger.info("Paper reader loaded %d parameters (preset=%s)",
                          len(filtered), self._config.preset_name or 'Custom')
         except Exception as e:

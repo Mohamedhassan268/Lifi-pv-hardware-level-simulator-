@@ -1,0 +1,82 @@
+===============================================================================
+  PaperLens Setup Guide — AMD Laptop (12 GB VRAM)
+===============================================================================
+
+STEP 1: Install Python Dependencies
+-------------------------------------
+  pip install -r requirements.txt
+  pip install easyocr pymupdf
+
+STEP 2: Install Ollama
+-------------------------------------
+  Download from: https://ollama.com/download
+  After install, pull the recommended model:
+
+    ollama pull qwen2.5:14b
+
+  (This is auto-selected for 12 GB VRAM — best quality for parameter extraction)
+
+STEP 3: Verify Everything Works
+-------------------------------------
+  python cli.py test          # Run module self-tests
+  python cli.py gui           # Launch the GUI, then Tools > PaperLens
+
+
+===============================================================================
+  Auto-Scaling by VRAM (no manual config needed)
+===============================================================================
+
+The pipeline automatically detects GPU VRAM and scales accordingly:
+
+  VRAM         Model            Context    Paper Text   Tables
+  ----------   --------------   -------    ----------   ------
+  < 3 GB       qwen2.5:1.5b     4,096      12,000 ch    3,000 ch
+  3-4 GB       qwen2.5:3b       4,096      12,000 ch    3,000 ch
+  5-6 GB       qwen2.5:7b       8,192      25,000 ch    5,000 ch
+  8-10 GB      qwen2.5:14b      8,192      25,000 ch    5,000 ch
+  10+ GB       qwen2.5:14b     16,384      40,000 ch    8,000 ch  <-- YOUR SETUP
+
+
+===============================================================================
+  AMD GPU Notes
+===============================================================================
+
+- Ollama on Windows: AMD GPUs are NOT supported by Ollama on Windows.
+  It will run on CPU instead — slower but fully functional.
+  (AMD GPU support exists on Linux via ROCm)
+
+- EasyOCR (PyTorch): Same situation — PyTorch on Windows only supports
+  NVIDIA CUDA. OCR will run on CPU. With a good AMD CPU this is still
+  fast (a few seconds per page).
+
+- No crashes or errors — everything falls back to CPU automatically.
+
+- Despite CPU-only inference, the 14b model + 16K context + 40K char
+  paper text will produce significantly better results than a 3b model
+  with 4K context on a small GPU.
+
+
+===============================================================================
+  Performance Expectations (AMD CPU-only)
+===============================================================================
+
+  Task                  Time Estimate
+  --------------------  -------------------------
+  PDF text extraction   < 1 second
+  OCR (if needed)       5-15 sec per page (CPU)
+  Regex extraction      < 1 second
+  LLM (qwen2.5:14b)    2-5 minutes (CPU)
+  Validation            < 1 second
+  --------------------  -------------------------
+  Total (text PDF)      3-6 minutes
+  Total (scanned PDF)   4-8 minutes
+
+
+===============================================================================
+  Quick Commands
+===============================================================================
+
+  python cli.py gui                              # Launch GUI
+  python cli.py pipeline --preset kadirvelu2021  # Run simulation
+  python cli.py validate                         # Validate all papers
+  python cli.py test                             # Run tests

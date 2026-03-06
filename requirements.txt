@@ -15,7 +15,7 @@ schemdraw>=0.22
 # === SPICE Integration (optional) ===
 PySpice>=1.5
 
-# === AI Paper Reader ===
+# === PaperLens (AI Paper Analysis) ===
 google-genai>=1.0          # Google Gemini API (gemini-2.0-flash)
 pdfplumber>=0.10            # PDF text + table extraction
 

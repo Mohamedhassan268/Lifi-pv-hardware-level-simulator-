@@ -1,6 +1,6 @@
 # ai/__init__.py
 """
-AI Paper Reader — Extract LiFi-PV parameters from research PDFs using Google Gemini.
+PaperLens — AI-powered paper analysis for LiFi-PV simulation readiness.
 
 Modules:
     pdf_extractor      — Extract text and tables from PDF files

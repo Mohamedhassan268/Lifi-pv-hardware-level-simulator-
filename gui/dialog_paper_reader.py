@@ -1,6 +1,6 @@
 # gui/dialog_paper_reader.py
 """
-AI Paper Reader Dialog — Extract LiFi-PV parameters from PDF.
+PaperLens Dialog — Analyze papers for LiFi-PV simulation readiness.
 
 Supports two backends:
     - Ollama (local, free, no API key) — recommended
@@ -81,7 +81,7 @@ class PaperReaderDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('AI Paper Reader')
+        self.setWindowTitle('PaperLens')
         self.setMinimumSize(800, 600)
         self.resize(950, 700)
 
@@ -98,11 +98,11 @@ class PaperReaderDialog(QDialog):
         layout.setSpacing(10)
 
         # ── Title ──
-        title = QLabel('AI Paper Reader')
+        title = QLabel('PaperLens')
         title.setStyleSheet(
             f'font-size: 18px; font-weight: bold; color: {COLORS["accent"]};')
         subtitle = QLabel(
-            'Extract LiFi-PV parameters from a research paper PDF')
+            'Analyze research papers for simulation readiness and parameter extraction')
         subtitle.setStyleSheet(f'color: {COLORS["text_dim"]}; margin-bottom: 8px;')
         layout.addWidget(title)
         layout.addWidget(subtitle)
@@ -460,10 +460,22 @@ class PaperReaderDialog(QDialog):
         self._progress_bar.setValue(5)
         self._progress_bar.setFormat('Done!')
         backend_label = result.get('backend', 'unknown')
+
+        # Show readiness decision in status bar with color
+        readiness = result.get('validation', {}).get('readiness', {})
+        decision = readiness.get('decision', '')
+        coverage = readiness.get('overall_pct', 0)
+        decision_colors = {
+            'READY': COLORS['success'],
+            'ESTIMATE': COLORS['warning'],
+            'HOLD': COLORS['error'],
+        }
+        decision_color = decision_colors.get(decision, COLORS['text_dim'])
         self._status_label.setText(
             f'Extracted {len(result["parameters"])} parameters '
             f'(score: {result["validation"]["score"]:.0f}%) '
-            f'via {backend_label}')
+            f'| Coverage: {coverage:.0f}% | {decision}: {readiness.get("decision_label", "")}')
+        self._status_label.setStyleSheet(f'color: {decision_color}; font-weight: bold;')
 
         # Populate table
         self._populate_table(result)
@@ -473,7 +485,9 @@ class PaperReaderDialog(QDialog):
         report = format_validation_report(result['validation'])
         if result.get('notes'):
             report += f"\n\n--- AI Notes ---\n{result['notes']}"
+        ocr_status = "Yes (EasyOCR)" if result.get('ocr_used') else "No (text-based PDF)"
         report += (f"\n\nBackend: {backend_label}"
+                   f"\nOCR: {ocr_status}"
                    f"\nPDF: {result.get('pdf_path', '?')}"
                    f"\nText extracted: {result.get('raw_text_length', 0):,} chars"
                    f"\nTables found: {result.get('tables_found', 0)}")
@@ -485,9 +499,9 @@ class PaperReaderDialog(QDialog):
         self._run_btn.setEnabled(True)
         self._browse_btn.setEnabled(True)
 
-        logger.info("Extraction complete: %d params, score=%.1f%% (%s)",
+        logger.info("Extraction complete: %d params, score=%.1f%%, readiness=%s (%s)",
                      len(result['parameters']),
-                     result['validation']['score'], backend_label)
+                     result['validation']['score'], decision, backend_label)
 
     def _on_error(self, error_msg: str):
         self._progress_bar.setValue(0)
