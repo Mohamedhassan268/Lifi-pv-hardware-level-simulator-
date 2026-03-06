@@ -58,29 +58,73 @@ _SECTION_KEYWORDS = re.compile(
 )
 
 
-def extract_text(pdf_path: str) -> str:
+def extract_text(pdf_path: str, progress_callback=None) -> tuple:
     """
     Extract all text from a PDF, page by page.
 
+    Tries text-based extraction first (pdfplumber/PyPDF2).
+    If very little text is found (< 100 chars), falls back to OCR
+    using EasyOCR if available.
+
     Args:
         pdf_path: Path to PDF file.
+        progress_callback: Optional callback for OCR progress updates.
 
     Returns:
-        Concatenated text from all pages, capped at MAX_CHARS.
+        Tuple of (text: str, ocr_used: bool).
 
     Raises:
-        ImportError: If neither pdfplumber nor PyPDF2 is installed.
+        ImportError: If no PDF library and no OCR available.
         FileNotFoundError: If the PDF doesn't exist.
     """
+    text = ''
+    ocr_used = False
+
+    # Try text-based extraction first
     if PDFPLUMBER_AVAILABLE:
-        return _extract_with_pdfplumber(pdf_path)
+        text = _extract_with_pdfplumber(pdf_path)
     elif PYPDF2_AVAILABLE:
-        return _extract_with_pypdf2(pdf_path)
-    else:
+        text = _extract_with_pypdf2(pdf_path)
+
+    # If text extraction yielded enough content, return it
+    if len(text.strip()) >= 100:
+        return text, False
+
+    # Text-based extraction failed or yielded little — try OCR
+    logger.warning("Text-based extraction yielded only %d chars, attempting OCR...",
+                   len(text.strip()))
+
+    from ai.ocr_engine import is_ocr_available, ocr_pdf
+
+    if is_ocr_available():
+        try:
+            text = ocr_pdf(pdf_path, progress_callback=progress_callback)
+            ocr_used = True
+            logger.info("OCR fallback succeeded: %d chars extracted", len(text))
+            return text, True
+        except Exception as e:
+            logger.error("OCR fallback failed: %s", e)
+            raise RuntimeError(
+                f"Text-based extraction found very little text and OCR failed: {e}\n"
+                f"The PDF may be corrupted or in an unsupported format."
+            ) from e
+
+    # No OCR available — give helpful error
+    if not PDFPLUMBER_AVAILABLE and not PYPDF2_AVAILABLE:
         raise ImportError(
             "No PDF library available. Install one:\n"
             "  pip install pdfplumber   (recommended)\n"
-            "  pip install PyPDF2       (fallback)")
+            "  pip install PyPDF2       (fallback)\n"
+            "For scanned PDFs, also install:\n"
+            "  pip install easyocr pdf2image")
+    else:
+        raise RuntimeError(
+            "Very little text extracted from PDF. "
+            "The file may be image-based (scanned).\n"
+            "Install OCR support with:\n"
+            "  pip install easyocr pdf2image\n"
+            "Windows also needs Poppler:\n"
+            "  https://github.com/oschwartz10612/poppler-windows/releases")
 
 
 def extract_tables(pdf_path: str) -> list:

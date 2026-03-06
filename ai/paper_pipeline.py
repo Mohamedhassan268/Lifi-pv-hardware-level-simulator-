@@ -1,6 +1,6 @@
 # ai/paper_pipeline.py
 """
-AI Paper Reader Pipeline — Full orchestration from PDF to SystemConfig.
+PaperLens Pipeline — Full orchestration from PDF to SystemConfig.
 
 Supports two backends:
     - 'gemini': Google Gemini API (needs API key, fast)
@@ -93,14 +93,17 @@ class PaperReaderPipeline:
         if not os.path.isfile(pdf_path):
             raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-        # Step 1: Extract text
+        # Step 1: Extract text (with automatic OCR fallback)
         self._report(1, "Extracting text from PDF...")
-        paper_text = extract_text(pdf_path)
+        paper_text, ocr_used = extract_text(
+            pdf_path,
+            progress_callback=lambda p, t, msg: self._report(1, msg))
+        if ocr_used:
+            self._report(1, "Text extracted via OCR")
         if len(paper_text.strip()) < 100:
             raise RuntimeError(
-                "Very little text extracted from PDF. "
-                "The file may be image-based (scanned). "
-                "Try a text-based PDF or OCR the document first.")
+                "Very little text extracted from PDF even after OCR. "
+                "The file may be corrupted or in an unsupported format.")
 
         # Step 2: Extract tables + regex pre-extraction
         self._report(2, "Extracting tables and scanning for parameters...")
@@ -154,6 +157,7 @@ class PaperReaderPipeline:
             'backend': self.backend,
             'regex_params_count': len(regex_params),
             'llm_params_count': len(llm_params),
+            'ocr_used': ocr_used,
         }
 
 

@@ -242,19 +242,31 @@ class OllamaClient:
         model_size = self.model.split(':')[-1] if ':' in self.model else ''
         is_small_model = any(s in model_size for s in ('1.5b', '3b', '1b', '0.5b'))
 
+        # Scale text limits based on VRAM (more VRAM = more context = better extraction)
+        vram = get_gpu_vram_mb()
+        if vram and vram >= 10000:
+            text_limit, table_limit = 40_000, 8_000
+            key_text_limit = 20_000
+        elif vram and vram >= 6000:
+            text_limit, table_limit = 25_000, 5_000
+            key_text_limit = 15_000
+        else:
+            text_limit, table_limit = 20_000, 5_000
+            key_text_limit = 12_000
+
         if is_small_model:
             # Small models: use compact prompt + filtered key text
             from ai.pdf_extractor import extract_key_text
-            key_text = extract_key_text(paper_text, max_chars=12_000)
+            key_text = extract_key_text(paper_text, max_chars=key_text_limit)
             prompt = COMPACT_EXTRACTION_PROMPT.format(
                 paper_text=key_text,
-                tables_text=tables_text[:3_000] if tables_text.strip() != '(No tables extracted from PDF)' else '',
+                tables_text=tables_text[:table_limit] if tables_text.strip() != '(No tables extracted from PDF)' else '',
             )
         else:
-            # Larger models: use full prompt
+            # Larger models: use full prompt with scaled limits
             prompt = EXTRACTION_PROMPT.format(
-                paper_text=paper_text[:20_000],
-                tables_text=tables_text[:5_000],
+                paper_text=paper_text[:text_limit],
+                tables_text=tables_text[:table_limit],
             )
 
         cpu_mode = self._force_cpu
@@ -276,10 +288,14 @@ class OllamaClient:
     def _call_ollama(self, prompt: str, cpu_mode: bool,
                      progress_callback=None) -> str:
         """Make the actual Ollama API call with auto-retry on CUDA errors."""
-        # num_ctx: 4096 fits in 4GB VRAM with 3b model
-        # Larger contexts (8192+) cause Ollama to silently fall back to CPU
+        # Scale context window with available VRAM
         vram = get_gpu_vram_mb()
-        ctx_size = 4096 if (vram and vram < 6000) else 8192
+        if vram and vram >= 10000:
+            ctx_size = 16384  # 10+ GB: large context for thorough extraction
+        elif vram and vram >= 6000:
+            ctx_size = 8192   # 6-10 GB: standard context
+        else:
+            ctx_size = 4096   # <6 GB: minimal context to fit in VRAM
         options = {
             'temperature': 0.1,
             'num_predict': 4096,
