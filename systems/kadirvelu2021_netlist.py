@@ -43,7 +43,7 @@ _SPICE_MODELS_DIR = _BASE_DIR / 'spice_models'
 def _include_path(model_name: str) -> str:
     """Get .include line for a SPICE model file."""
     path = _SPICE_MODELS_DIR / f"{model_name}.lib"
-    return f".include {path}"
+    return f".include {path.as_posix()}"
 
 
 # =============================================================================
@@ -387,7 +387,8 @@ class FullSystemNetlist:
         elif source_type == 'pwl':
             if pwl_file is None:
                 raise ValueError("pwl_file required for source_type='pwl'")
-            source_line = f"Voptical optical_power 0 PWL FILE = '{pwl_file}'"
+            pwl_posix = str(pwl_file).replace('\\', '/')
+            source_line = f"Voptical optical_power 0 PWL FILE = '{pwl_posix}'"
         else:
             raise ValueError(f"Unknown source_type: {source_type}")
 

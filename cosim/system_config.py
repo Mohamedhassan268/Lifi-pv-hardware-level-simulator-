@@ -75,6 +75,7 @@ class SystemConfig:
     dcdc_cp_uF: float = 10.0
     dcdc_cl_uF: float = 47.0
     r_load_ohm: float = 180000.0
+    vcc_volts: float = 3.3
 
     # -- Simulation Controls ---------------------------------------------------
     t_stop_s: float = 1e-3
@@ -227,8 +228,8 @@ class SystemConfig:
         noise_thermal = np.sqrt(4 * kT * BW / max(R_sense, 1e-6))
         noise_total = np.sqrt(noise_shot**2 + noise_thermal**2)
         if noise_total > 0:
-            return 20 * np.log10(I_signal / noise_total)
-        return float('inf')
+            return float(20 * np.log10(I_signal / noise_total))
+        return 200.0  # Cap at 200 dB (effectively noiseless)
 
     def __str__(self) -> str:
         name = self.preset_name or 'Custom'

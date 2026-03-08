@@ -293,7 +293,7 @@ def run_validation(output_dir=None):
     ber_sim = compute_BER(0.50, 200, 400)
     ber_err = abs(ber_sim - TARGETS['BER']) / TARGETS['BER'] * 100
     print(f"\n  BER @ m=50%, f_sw=200kHz: {ber_sim:.3e} (target: {TARGETS['BER']:.3e})")
-    print(f"  Error: {ber_err:.1f}%  {'PASS' if ber_err < 50 else 'FAIL'}")
+    print(f"  Error: {ber_err:.1f}%  {'PASS' if ber_err < 20 else 'FAIL'}")
 
     # Generate figures
     print("\n  Generating figures...")
@@ -303,7 +303,7 @@ def run_validation(output_dir=None):
     _plot_fig17(output_dir)
     _plot_fig19(output_dir)
 
-    all_pass = error_pct < 10 and ber_err < 50
+    all_pass = error_pct < 10 and ber_err < 20
     print(f"\n  Overall: {'PASS' if all_pass else 'REVIEW'}")
     print(f"  Output: {output_dir}")
     return all_pass

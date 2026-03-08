@@ -109,6 +109,10 @@ class LTSpiceRunner:
             self._last_log = ''
             self._last_raw = ''
             return False
+        except (OSError, PermissionError) as e:
+            self._last_log = ''
+            self._last_raw = ''
+            return False
 
         self._last_raw = str(raw_path) if raw_path.exists() else ''
         self._last_log = str(log_path) if log_path.exists() else ''

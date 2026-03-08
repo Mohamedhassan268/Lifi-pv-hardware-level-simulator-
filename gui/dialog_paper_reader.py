@@ -18,6 +18,37 @@ Features:
 import os
 import logging
 
+try:
+    import keyring as _keyring
+except ImportError:
+    _keyring = None
+
+_KEYRING_SERVICE = 'lifi_pv_simulator'
+_KEYRING_KEY = 'gemini_api_key'
+
+
+def _store_api_key(key: str) -> None:
+    """Store API key securely via keyring, fallback to QSettings."""
+    if _keyring is not None:
+        try:
+            _keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, key)
+            return
+        except Exception:
+            pass
+    # Fallback handled by caller via QSettings
+
+
+def _load_api_key(settings) -> str:
+    """Load API key from keyring first, then QSettings."""
+    if _keyring is not None:
+        try:
+            val = _keyring.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
+            if val:
+                return val
+        except Exception:
+            pass
+    return settings.value('gemini_api_key', '')
+
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QLineEdit, QFileDialog,
@@ -354,8 +385,8 @@ class PaperReaderDialog(QDialog):
         model = self._settings.value('paper_reader_ollama_model', 'qwen2.5:3b')
         self._ollama_model_combo.setCurrentText(model)
 
-        # API key
-        key = self._settings.value('gemini_api_key', '')
+        # API key (prefer keyring, fallback to QSettings)
+        key = _load_api_key(self._settings)
         if key:
             self._key_edit.setText(key)
 
@@ -372,7 +403,11 @@ class PaperReaderDialog(QDialog):
         if not model_name:
             model_name = self._ollama_model_combo.currentText()
         self._settings.setValue('paper_reader_ollama_model', model_name)
-        self._settings.setValue('gemini_api_key', self._key_edit.text().strip())
+        api_key = self._key_edit.text().strip()
+        _store_api_key(api_key)
+        if _keyring is None:
+            # Fallback: store in QSettings (plaintext) if keyring unavailable
+            self._settings.setValue('gemini_api_key', api_key)
         if self._pdf_edit.text():
             self._settings.setValue(
                 'paper_reader_last_dir',
