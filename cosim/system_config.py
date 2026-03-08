@@ -133,6 +133,46 @@ class SystemConfig:
     paper_reference: str = ''
 
     # -------------------------------------------------------------------------
+    # Validation
+    # -------------------------------------------------------------------------
+
+    _VALID_MODULATIONS = frozenset({
+        'OOK', 'OOK_Manchester', 'OFDM', 'BFSK', 'PWM_ASK',
+    })
+
+    def __post_init__(self):
+        """Validate parameter ranges after initialization."""
+        errors = []
+
+        if self.distance_m <= 0:
+            errors.append(f"distance_m must be > 0, got {self.distance_m}")
+        if self.data_rate_bps <= 0:
+            errors.append(f"data_rate_bps must be > 0, got {self.data_rate_bps}")
+        if self.modulation not in self._VALID_MODULATIONS:
+            errors.append(
+                f"modulation must be one of {sorted(self._VALID_MODULATIONS)}, "
+                f"got '{self.modulation}'"
+            )
+        if self.bpf_f_low_Hz >= self.bpf_f_high_Hz and self.bpf_f_low_Hz > 0:
+            errors.append(
+                f"bpf_f_low_Hz ({self.bpf_f_low_Hz}) must be < "
+                f"bpf_f_high_Hz ({self.bpf_f_high_Hz})"
+            )
+
+        # Physical quantities must be non-negative
+        for field_name in ('sc_area_cm2', 'sc_responsivity', 'sc_cj_nF',
+                           'led_radiated_power_mW', 'r_sense_ohm',
+                           'bias_current_A', 'vcc_volts'):
+            val = getattr(self, field_name)
+            if val < 0:
+                errors.append(f"{field_name} must be >= 0, got {val}")
+
+        if errors:
+            raise ValueError(
+                "Invalid SystemConfig:\n  " + "\n  ".join(errors)
+            )
+
+    # -------------------------------------------------------------------------
     # Serialization
     # -------------------------------------------------------------------------
 
