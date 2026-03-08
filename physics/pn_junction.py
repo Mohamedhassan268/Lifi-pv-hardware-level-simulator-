@@ -143,22 +143,6 @@ def junction_capacitance(V_applied: float, area_cm2: float,
     return C_j  # Farads
 
 
-def junction_capacitance_model(area_cm2: float, N_a: float, N_d: float,
-                               material_name: str, T: float = 300.0):
-    """
-    Return C_j0 and V_bi for the standard capacitance model:
-    C_j(V) = C_j0 / sqrt(1 - V/V_bi)
-
-    Useful for SPICE-compatible parameter extraction.
-
-    Returns:
-        (C_j0, V_bi) tuple — C_j0 in Farads, V_bi in Volts
-    """
-    V_bi = built_in_voltage(N_a, N_d, material_name, T)
-    C_j0 = junction_capacitance(0, area_cm2, N_a, N_d, material_name, T)
-    return C_j0, V_bi
-
-
 # =============================================================================
 # DARK CURRENT (Reverse Saturation Current)
 # =============================================================================

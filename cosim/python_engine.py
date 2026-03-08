@@ -24,6 +24,10 @@ from typing import Dict, Optional
 Q_ELECTRON = 1.602e-19
 K_BOLTZMANN = 1.38e-23
 
+# Simulation defaults
+SAMPLES_PER_BIT = 500        # Oversampling ratio for time-domain simulation
+TIA_GAIN_OHM = 50e3          # Transimpedance gain for noise domain conversion
+
 
 # =============================================================================
 # BER PREDICTION FUNCTIONS
@@ -537,7 +541,7 @@ def run_python_simulation(config) -> Dict:
 
     # Compute timing
     bit_period = 1.0 / cfg.data_rate_bps
-    samples_per_bit = 500
+    samples_per_bit = SAMPLES_PER_BIT
     n_bits = cfg.n_bits
     n_samples = n_bits * samples_per_bit
     dt = bit_period / samples_per_bit
@@ -665,8 +669,7 @@ def run_python_simulation(config) -> Dict:
             # Scale noise from current domain (A) to the OFDM signal domain:
             # TIA gain (R_tia ~50kΩ) converts current noise to voltage-level noise
             # that matches the OFDM baseband signal amplitude.
-            tia_gain = 50e3  # Ohms — transimpedance gain
-            ofdm_rx_signal += np.random.normal(0, sigma * tia_gain, len(ofdm_rx_signal))
+            ofdm_rx_signal += np.random.normal(0, sigma * TIA_GAIN_OHM, len(ofdm_rx_signal))
 
         # Equalize (ZF: divide by known channel)
         if G > 0:

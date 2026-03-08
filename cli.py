@@ -6,6 +6,7 @@ Usage:  python cli.py <command> [options]
 """
 
 import sys, os, argparse, logging, numpy as np
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -13,9 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 def _setup_logging(verbose=False):
     """Configure logging for CLI and all submodules."""
     level = logging.DEBUG if verbose else logging.INFO
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workspace')
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, 'simulator.log')
+    log_dir = Path(__file__).parent / 'workspace'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / 'simulator.log'
 
     logging.basicConfig(
         level=level,
@@ -284,12 +285,12 @@ def cmd_validate(args):
 
     if args.paper:
         _header(f"VALIDATE: {args.paper}")
-        out = args.output or os.path.join('workspace', f'validation_{args.paper}')
+        out = args.output or str(Path('workspace') / f'validation_{args.paper}')
         passed = run_paper(args.paper, out)
         print(f"\n  Result: {'PASS' if passed else 'FAIL'}")
     else:
         _header("VALIDATE ALL PAPERS")
-        base = args.output or os.path.join('workspace', 'validation')
+        base = args.output or str(Path('workspace') / 'validation')
         results = run_all_papers(base)
         print("\n" + "=" * 50)
         print("  SUMMARY")
