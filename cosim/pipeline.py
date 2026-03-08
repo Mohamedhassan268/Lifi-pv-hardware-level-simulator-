@@ -630,6 +630,8 @@ class SimulationPipeline:
 
         cfg = self.config
         pwl_abs = Path(pwl_path).resolve()
+        if not pwl_abs.exists():
+            raise FileNotFoundError(f"PWL file not found: {pwl_abs}")
         # LTspice needs forward slashes or escaped backslashes in paths
         pwl_str = str(pwl_abs).replace('\\', '/')
         t_stop = cfg.t_stop_s

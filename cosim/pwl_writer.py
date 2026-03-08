@@ -47,6 +47,11 @@ def write_photocurrent_pwl(time: np.ndarray,
     Returns:
         Absolute path to written file
     """
+    if len(time) == 0 or len(P_tx) == 0:
+        raise ValueError("time and P_tx arrays must not be empty")
+    if len(time) != len(P_tx):
+        raise ValueError(f"time ({len(time)}) and P_tx ({len(P_tx)}) length mismatch")
+
     filename = Path(filename)
     filename.parent.mkdir(parents=True, exist_ok=True)
 
@@ -92,6 +97,11 @@ def write_optical_power_pwl(time: np.ndarray,
     Returns:
         Absolute path to written file
     """
+    if len(time) == 0 or len(P_rx) == 0:
+        raise ValueError("time and P_rx arrays must not be empty")
+    if len(time) != len(P_rx):
+        raise ValueError(f"time ({len(time)}) and P_rx ({len(P_rx)}) length mismatch")
+
     filename = Path(filename)
     filename.parent.mkdir(parents=True, exist_ok=True)
 
@@ -122,6 +132,11 @@ def write_voltage_pwl(time: np.ndarray,
     Returns:
         Absolute path to written file
     """
+    if len(time) == 0 or len(voltage) == 0:
+        raise ValueError("time and voltage arrays must not be empty")
+    if len(time) != len(voltage):
+        raise ValueError(f"time ({len(time)}) and voltage ({len(voltage)}) length mismatch")
+
     filename = Path(filename)
     filename.parent.mkdir(parents=True, exist_ok=True)
 
