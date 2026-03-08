@@ -21,10 +21,17 @@ Usage:
 """
 
 import logging
+import os
+import sys
 import numpy as np
 from pathlib import Path
 from typing import Dict, Optional, Callable
 import time as _time
+
+# Add project root to sys.path so we can import sibling packages (simulation/, systems/)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from .system_config import SystemConfig
 from .pwl_writer import write_photocurrent_pwl
@@ -95,9 +102,6 @@ class SimulationPipeline:
 
         Uses PRBS generator to create OOK-modulated waveform.
         """
-        import sys, os
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
         self.step_tx.status = 'running'
         self._notify('TX', 'running', 'Generating OOK waveform...')
         t0 = _time.time()
@@ -273,18 +277,18 @@ class SimulationPipeline:
                 # Fallback: try ngspice
                 self._notify('RX', 'running', 'Trying ngspice fallback...')
                 try:
-                    import sys, os
-                    sys.path.insert(0, os.path.dirname(os.path.dirname(
-                        os.path.abspath(__file__))))
                     from simulation.ngspice_runner import NgSpiceRunner
                     ngrunner = NgSpiceRunner()
-                    if ngrunner.available:
-                        ok = ngrunner.run(str(cir_path))
-                        if ok:
-                            sim_engine = 'ngspice'
-                            self.step_rx.outputs['engine'] = 'ngspice'
+                    ng_result = ngrunner.run_transient(str(cir_path))
+                    if ng_result is not None:
+                        sim_engine = 'ngspice'
+                        raw_data = ng_result
+                        self.step_rx.outputs['engine'] = 'ngspice'
+                        self.step_rx.outputs['traces'] = list(ng_result.keys())
                 except ImportError as e:
                     logger.warning("ngspice fallback unavailable: %s", e)
+                except Exception as e:
+                    logger.warning("ngspice simulation failed: %s", e)
 
             if sim_engine == 'none':
                 self.step_rx.status = 'error'
@@ -477,10 +481,6 @@ class SimulationPipeline:
         Returns:
             BER result dict or None
         """
-        import sys, os
-        sys.path.insert(0, os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))))
-
         raw_path = self.step_rx.outputs.get('raw_file')
         if not raw_path or self._tx_bits is None:
             return None
@@ -624,10 +624,6 @@ class SimulationPipeline:
         models (INA322 with 2-pole GBW, active BPF, comparator with delay).
         Falls back to inline netlist if FullSystemNetlist is unavailable.
         """
-        import sys, os
-        sys.path.insert(0, os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))))
-
         cfg = self.config
         pwl_abs = Path(pwl_path).resolve()
         if not pwl_abs.exists():

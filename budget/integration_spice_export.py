@@ -296,7 +296,7 @@ def test_spice_export():
 
     # --- Write sample to file ---
     print("\n5. WRITE SAMPLE NETLIST")
-    outpath = '/home/claude/kxob25_receiver.cir'
+    outpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'workspace', 'kxob25_receiver.cir')
     with open(outpath, 'w') as f:
         f.write(nl_sys)
     print(f"  Written to {outpath}")
