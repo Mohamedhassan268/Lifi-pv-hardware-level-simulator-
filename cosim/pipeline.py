@@ -283,8 +283,8 @@ class SimulationPipeline:
                         if ok:
                             sim_engine = 'ngspice'
                             self.step_rx.outputs['engine'] = 'ngspice'
-                except ImportError:
-                    pass
+                except ImportError as e:
+                    logger.warning("ngspice fallback unavailable: %s", e)
 
             if sim_engine == 'none':
                 self.step_rx.status = 'error'
@@ -329,12 +329,13 @@ class SimulationPipeline:
 
         # Graceful degradation: if SPICE requested but unavailable, fall back
         if engine == 'spice' and not self.ltspice.available and not spice_available():
-            logger.warning(
-                "SPICE engine requested but no SPICE simulator found. "
-                "Falling back to Python engine."
+            fallback_msg = (
+                "WARNING: SPICE engine requested but no SPICE simulator found "
+                "(LTspice/ngspice). Falling back to Python engine. "
+                "Install LTspice or ngspice for full SPICE-level simulation."
             )
-            self._notify('RX', 'running',
-                         'No SPICE engine found — falling back to Python engine')
+            logger.warning(fallback_msg)
+            self._notify('RX', 'running', fallback_msg)
             return self.run_python_engine()
 
         # Default: SPICE pipeline
@@ -493,7 +494,7 @@ class SimulationPipeline:
 
             cfg = self.config
             bit_period = 1.0 / cfg.data_rate_bps
-            threshold = 1.65  # VCC/2
+            threshold = cfg.vcc_volts / 2  # Vref = VCC/2
 
             # Only use bits that fit within the simulation time
             t_max = time[-1]
@@ -542,7 +543,7 @@ class SimulationPipeline:
                 v_bpf = parser.get_trace('V(bpf_out)')
                 bpf_ber = calculate_ber_from_transient(
                     tx_bits_clipped, v_bpf, time,
-                    threshold=1.65,
+                    threshold=cfg.vcc_volts / 2,
                     bit_period=bit_period,
                     sample_offset=0.5,
                     skip_bits=2,
@@ -676,9 +677,9 @@ class SimulationPipeline:
 * =====================================================================
 * POWER SUPPLIES
 * =====================================================================
-Vcc vcc 0 DC 3.3
+Vcc vcc 0 DC {cfg.vcc_volts}
 Vee vee 0 DC 0
-Vref vref 0 DC 1.65
+Vref vref 0 DC {cfg.vcc_volts / 2}
 
 * =====================================================================
 * OPTICAL INPUT (PWL bridge from channel model)

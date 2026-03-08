@@ -662,7 +662,11 @@ def run_python_simulation(config) -> Dict:
         ofdm_rx_signal = ofdm_tx_signal * G
         if cfg.noise_enable:
             sigma = noise_model.total_noise_std(np.mean(I_ph), bandwidth)
-            ofdm_rx_signal += np.random.normal(0, sigma * 50e3, len(ofdm_rx_signal))
+            # Scale noise from current domain (A) to the OFDM signal domain:
+            # TIA gain (R_tia ~50kΩ) converts current noise to voltage-level noise
+            # that matches the OFDM baseband signal amplitude.
+            tia_gain = 50e3  # Ohms — transimpedance gain
+            ofdm_rx_signal += np.random.normal(0, sigma * tia_gain, len(ofdm_rx_signal))
 
         # Equalize (ZF: divide by known channel)
         if G > 0:
