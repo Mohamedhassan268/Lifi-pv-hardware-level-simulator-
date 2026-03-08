@@ -309,9 +309,9 @@ class LTSpiceRawParser:
             return np.array([])
 
         name_lower = name.lower()
-        for idx, var_name, _ in self._variables:
+        for col_pos, (idx, var_name, _) in enumerate(self._variables):
             if var_name.lower() == name_lower:
-                col = self._data[:, idx]
+                col = self._data[:, col_pos]
                 if self._is_complex:
                     return col  # return complex
                 return np.real(col)

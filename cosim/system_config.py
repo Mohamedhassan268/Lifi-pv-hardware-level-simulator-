@@ -83,6 +83,7 @@ class SystemConfig:
     prbs_order: int = 7
     n_bits: int = 100
     simulation_engine: str = 'spice'    # 'spice' or 'python'
+    random_seed: Optional[int] = None    # RNG seed for reproducibility (None = random)
 
     # -- Noise Configuration ---------------------------------------------------
     noise_enable: bool = False
@@ -223,7 +224,7 @@ class SystemConfig:
         BW = self.data_rate_bps / 2
         R_sense = self.r_sense_ohm
         noise_shot = np.sqrt(2 * q * I_ph * BW)
-        noise_thermal = np.sqrt(4 * kT * BW / (self.sc_rsh_kOhm * 1e3))
+        noise_thermal = np.sqrt(4 * kT * BW / max(R_sense, 1e-6))
         noise_total = np.sqrt(noise_shot**2 + noise_thermal**2)
         if noise_total > 0:
             return 20 * np.log10(I_signal / noise_total)

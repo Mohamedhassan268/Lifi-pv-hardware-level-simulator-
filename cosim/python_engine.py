@@ -545,7 +545,8 @@ def run_python_simulation(config) -> Dict:
     t = np.arange(n_samples) * dt
 
     # Generate TX bits
-    np.random.seed(42)
+    if cfg.random_seed is not None:
+        np.random.seed(cfg.random_seed)
     bits_tx = np.random.randint(0, 2, n_bits)
 
     # Create transmitter
