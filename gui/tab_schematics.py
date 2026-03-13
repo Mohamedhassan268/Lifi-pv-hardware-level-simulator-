@@ -113,7 +113,6 @@ class SchematicsTab(QWidget):
         # Description hints
         _descs = {
             'kadirvelu2021': 'OOK @ 5 kbps, 32.5 cm — Full analog RX chain with INA322 + BPF + DC-DC',
-            'fakidis2020': 'OOK @ 2 kbps, 1.0 m — Higher power, Si solar cell, similar RX chain',
             'sarwar2017': 'OFDM 16-QAM @ 15 Mbps, 2.0 m — High-speed, minimal analog, direct demod',
             'gonzalez2024': 'OOK Manchester @ 4.8 kbps, 0.6 m — Minimal design: amp + notch + comparator',
             'oliveira2024': 'OFDM 64-QAM @ 25.7 Mbps, 0.5 m — Red laser + 3×3 photodiode array',

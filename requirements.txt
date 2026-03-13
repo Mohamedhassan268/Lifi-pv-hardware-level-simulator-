@@ -1,5 +1,13 @@
 # Hardware-Faithful LiFi-PV Simulator — Python Dependencies
-# Install: python -m venv venv && venv\Scripts\activate && pip install -r requirements.txt
+#
+# Quick start:
+#   python -m venv .venv
+#   .venv\Scripts\activate          # Windows
+#   source .venv/bin/activate       # Linux/macOS
+#   pip install -r requirements.txt
+#
+# Optional extras (install separately if needed):
+#   pip install -r requirements-optional.txt
 
 # === Core Simulation ===
 numpy>=2.0
@@ -11,13 +19,6 @@ PyQt6>=6.6
 
 # === Schematics ===
 schemdraw>=0.22
-
-# === SPICE Integration (optional) ===
-PySpice>=1.5
-
-# === PaperLens (AI Paper Analysis) ===
-google-genai>=1.0          # Google Gemini API (gemini-2.0-flash)
-pdfplumber>=0.10            # PDF text + table extraction
 
 # === Other ===
 requests>=2.31

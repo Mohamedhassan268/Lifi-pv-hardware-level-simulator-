@@ -1,13 +1,16 @@
 # cosim/pipeline.py
 """
-3-Step Simulation Pipeline: TX -> Channel -> RX
+Unified Simulation Pipeline: TX -> Channel -> RX
 
-Orchestrates the full co-simulation flow:
-    Step 1 (TX):      Generate P_tx(t) — OOK modulated optical power waveform
-    Step 2 (Channel): Apply channel model → write i_ph.pwl bridge file
-    Step 3 (RX):      Generate receiver netlist → run SPICE → parse results
+Orchestrates the full co-simulation flow with automatic engine selection:
+    Step 1 (TX):      Python — modulate() for all 5 schemes
+    Step 2 (Channel): Python — OpticalChannel propagation + noise PWL
+    Step 3 (RX):      SPICE (if available) or Python — receiver circuit
 
-Each step is independent and re-runnable.
+Supports three modes:
+    - 'python':  All-Python simulation (always available)
+    - 'spice':   Python TX+Channel → SPICE RX → Python BER (hybrid)
+    - fallback:  If SPICE requested but unavailable, degrades to Python
 
 Usage:
     from cosim.pipeline import SimulationPipeline
@@ -36,10 +39,16 @@ if _PROJECT_ROOT not in sys.path:
 from .system_config import SystemConfig
 from .pwl_writer import write_photocurrent_pwl
 from .ltspice_runner import LTSpiceRunner
+from .ngspice_runner import NgSpiceRunner
 from .raw_parser import LTSpiceRawParser
 from .spice_finder import spice_available
+from .channel import OpticalChannel
+from .modulation import modulate, demodulate, calculate_ber
 
 logger = logging.getLogger(__name__)
+
+# Samples per bit for TX waveform generation (SPICE pipeline)
+_SAMPLES_PER_BIT = 100
 
 
 class StepResult:
@@ -84,6 +93,7 @@ class SimulationPipeline:
         # Intermediate data
         self._time = None
         self._P_tx = None
+        self._P_rx = None
         self._I_ph = None
         self._tx_bits = None
 
@@ -93,39 +103,38 @@ class SimulationPipeline:
             self.on_progress(step_name, status, message)
 
     # -------------------------------------------------------------------------
-    # Step 1: TX — generate OOK optical power waveform
+    # Step 1: TX — generate modulated optical power waveform
     # -------------------------------------------------------------------------
 
     def run_step_tx(self) -> StepResult:
         """
         Generate transmitted optical power waveform P_tx(t).
 
-        Uses PRBS generator to create OOK-modulated waveform.
+        Uses the unified modulate() dispatch to support all 5 modulation
+        schemes (OOK, Manchester, OFDM, BFSK, PWM-ASK) for both SPICE
+        and Python engine paths.
         """
         self.step_tx.status = 'running'
-        self._notify('TX', 'running', 'Generating OOK waveform...')
+        cfg = self.config
+        mod_scheme = cfg.modulation.upper().replace('-', '_')
+        self._notify('TX', 'running', f'Generating {mod_scheme} waveform...')
         t0 = _time.time()
 
         try:
-            from simulation.prbs_generator import generate_prbs, generate_ook_waveform
+            # Generate time array
+            bit_period = 1.0 / cfg.data_rate_bps
+            n_samples = cfg.n_bits * _SAMPLES_PER_BIT
+            dt = bit_period / _SAMPLES_PER_BIT
+            time_arr = np.arange(n_samples) * dt
 
-            cfg = self.config
-
-            # Generate PRBS bit sequence
-            bits = generate_prbs(order=cfg.prbs_order, n_bits=cfg.n_bits)
+            # Generate TX bits
+            if cfg.random_seed is not None:
+                np.random.seed(cfg.random_seed)
+            bits = np.random.randint(0, 2, cfg.n_bits)
             self._tx_bits = bits
 
-            # Convert to OOK optical power waveform
-            P_dc = cfg.led_radiated_power_mW * 1e-3  # W
-            time_arr, P_norm = generate_ook_waveform(
-                bits,
-                bit_rate=cfg.data_rate_bps,
-                samples_per_bit=100,
-                modulation_depth=cfg.modulation_depth,
-                dc_level=1.0,
-            )
-            # Scale normalized waveform to actual optical power
-            P_tx = P_norm * P_dc
+            # Modulate using unified dispatch (supports all 5 schemes)
+            P_tx = modulate(mod_scheme, bits, time_arr, config=cfg)
             self._time = time_arr
             self._P_tx = P_tx
 
@@ -134,16 +143,18 @@ class SimulationPipeline:
             from .pwl_writer import write_voltage_pwl
             write_voltage_pwl(time_arr, P_tx, tx_pwl_path)
 
+            P_dc = cfg.led_radiated_power_mW * 1e-3
             self.step_tx.status = 'done'
             self.step_tx.duration_s = _time.time() - t0
             self.step_tx.message = (
                 f'{cfg.n_bits} bits @ {cfg.data_rate_bps/1e3:.0f} kbps, '
-                f'P_dc={P_dc*1e3:.1f} mW, mod={cfg.modulation_depth}'
+                f'{mod_scheme} modulation, P_dc={P_dc*1e3:.1f} mW'
             )
             self.step_tx.outputs = {
                 'P_tx_pwl': str(tx_pwl_path),
                 'n_bits': len(bits),
                 'P_dc_mW': P_dc * 1e3,
+                'modulation': mod_scheme,
             }
             self._notify('TX', 'done', self.step_tx.message)
 
@@ -161,11 +172,11 @@ class SimulationPipeline:
 
     def run_step_channel(self) -> StepResult:
         """
-        Apply channel model to P_tx(t) and write optical power PWL bridge file.
+        Apply channel model to P_tx(t) and write PWL bridge files.
 
-        The PWL file contains P_rx(t) = G_ch * P_tx(t) in watts.
-        This feeds into SOLAR_CELL subcircuit as V(photo_in) where 1V = 1W.
-        The subcircuit internally computes I_ph = R_lambda * V(photo_in).
+        Writes:
+            - optical_power.pwl: P_rx(t) for SOLAR_CELL subcircuit
+            - noise.pwl: Calibrated noise current (if noise_enable=True)
         """
         self.step_channel.status = 'running'
         self._notify('Channel', 'running', 'Computing channel response...')
@@ -176,15 +187,16 @@ class SimulationPipeline:
                 raise RuntimeError('Run TX step first')
 
             cfg = self.config
-            G_ch = cfg.optical_channel_gain()
+            channel = OpticalChannel.from_config(cfg)
+            G_ch = channel.channel_gain()
             R_lambda = cfg.sc_responsivity
 
             # Compute received optical power P_rx(t) = G_ch * P_tx(t)
-            P_rx = G_ch * self._P_tx
+            P_rx = channel.propagate(self._P_tx)
+            self._P_rx = P_rx
             self._I_ph = R_lambda * P_rx
 
             # Write PWL bridge file: P_rx(t) in watts (voltage representation)
-            # The SOLAR_CELL subcircuit uses V(photo_in) * R_lambda for Iph
             pwl_path = self.session_dir / 'pwl' / 'optical_power.pwl'
             from .pwl_writer import write_optical_power_pwl
             write_optical_power_pwl(
@@ -204,6 +216,22 @@ class SimulationPipeline:
             P_rx_avg = np.mean(P_rx)
             I_ph_avg = np.mean(self._I_ph)
 
+            # Generate calibrated noise PWL if noise is enabled
+            noise_pwl_path = None
+            if cfg.noise_enable:
+                from .noise import NoiseModel
+                from .pwl_writer import write_noise_pwl
+                noise_model = NoiseModel.from_config(cfg)
+                bandwidth = cfg.data_rate_bps / 2
+                noise_pwl_path = self.session_dir / 'pwl' / 'noise.pwl'
+                write_noise_pwl(
+                    noise_model, self._time, I_ph_avg,
+                    bandwidth=bandwidth,
+                    filename=noise_pwl_path,
+                    random_seed=cfg.random_seed,
+                )
+                logger.info("Noise PWL written: %s", noise_pwl_path)
+
             self.step_channel.status = 'done'
             self.step_channel.duration_s = _time.time() - t0
             self.step_channel.message = (
@@ -217,6 +245,8 @@ class SimulationPipeline:
                 'P_rx_avg_uW': P_rx_avg * 1e6,
                 'I_ph_avg_uA': I_ph_avg * 1e6,
             }
+            if noise_pwl_path:
+                self.step_channel.outputs['noise_pwl'] = str(noise_pwl_path)
             self._notify('Channel', 'done', self.step_channel.message)
 
         except Exception as e:
@@ -245,9 +275,10 @@ class SimulationPipeline:
                 raise RuntimeError('Run Channel step first')
 
             cfg = self.config
+            noise_pwl = self.step_channel.outputs.get('noise_pwl')
 
             # Generate receiver netlist with PWL photocurrent source
-            netlist = self._generate_rx_netlist(pwl_path)
+            netlist = self._generate_rx_netlist(pwl_path, noise_pwl_path=noise_pwl)
 
             # Save netlist
             cir_path = self.session_dir / 'netlists' / 'receiver.cir'
@@ -274,19 +305,23 @@ class SimulationPipeline:
                         self.step_rx.outputs['traces'] = parser.list_traces()
 
             if raw_data is None:
-                # Fallback: try ngspice
+                # Fallback: try ngspice (from cosim module)
                 self._notify('RX', 'running', 'Trying ngspice fallback...')
                 try:
-                    from simulation.ngspice_runner import NgSpiceRunner
                     ngrunner = NgSpiceRunner()
-                    ng_result = ngrunner.run_transient(str(cir_path))
-                    if ng_result is not None:
-                        sim_engine = 'ngspice'
-                        raw_data = ng_result
-                        self.step_rx.outputs['engine'] = 'ngspice'
-                        self.step_rx.outputs['traces'] = list(ng_result.keys())
-                except ImportError as e:
-                    logger.warning("ngspice fallback unavailable: %s", e)
+                    if ngrunner.available:
+                        ok = ngrunner.run_transient(str(cir_path))
+                        if ok:
+                            sim_engine = 'ngspice'
+                            ng_raw_path = ngrunner.get_raw_path()
+                            if ng_raw_path:
+                                parser = LTSpiceRawParser(ng_raw_path)
+                                raw_data = parser.to_dict()
+                                import shutil
+                                dest = self.session_dir / 'raw' / 'receiver.raw'
+                                shutil.copy2(ng_raw_path, dest)
+                                self.step_rx.outputs['raw_file'] = str(dest)
+                                self.step_rx.outputs['traces'] = parser.list_traces()
                 except Exception as e:
                     logger.warning("ngspice simulation failed: %s", e)
 
@@ -320,8 +355,10 @@ class SimulationPipeline:
         """
         Run complete TX -> Channel -> RX pipeline.
 
-        Automatically selects SPICE or Python engine based on
-        config.simulation_engine setting.
+        Automatically selects engine based on config.simulation_engine:
+            - 'python': All-Python simulation
+            - 'spice':  Hybrid (Python TX+Channel → SPICE RX → Python BER)
+            - fallback: SPICE unavailable → Python with warning
 
         Returns:
             Dict with 'TX', 'Channel', 'RX' StepResult objects
@@ -342,7 +379,18 @@ class SimulationPipeline:
             self._notify('RX', 'running', fallback_msg)
             return self.run_python_engine()
 
-        # Default: SPICE pipeline
+        # Hybrid pipeline: Python TX+Channel → SPICE RX → Python BER
+        return self.run_hybrid()
+
+    def run_hybrid(self) -> Dict[str, StepResult]:
+        """
+        Run hybrid pipeline: Python TX+Channel → SPICE RX → Python BER.
+
+        This is the primary SPICE execution path. Uses Python's unified
+        modulate() for TX (supporting all 5 schemes), Python channel model
+        for propagation, and SPICE for the analog receiver circuit.
+        BER is computed in Python from the SPICE comparator output.
+        """
         self.run_step_tx()
         if self.step_tx.status != 'done':
             return self._results_dict()
@@ -356,6 +404,7 @@ class SimulationPipeline:
         # Auto-compute BER if .raw data available
         if self.step_rx.status == 'done':
             self.compute_ber()
+            self.step_rx.outputs['engine'] = 'hybrid'
 
         return self._results_dict()
 
@@ -475,8 +524,8 @@ class SimulationPipeline:
         """
         Compute BER from V(dout) in .raw file vs TX bits.
 
-        Samples comparator output at bit centers and compares
-        against transmitted PRBS sequence.
+        Uses cosim.spice_extract for result extraction, resampling,
+        and BER computation. Handles polarity inversion automatically.
 
         Returns:
             BER result dict or None
@@ -487,70 +536,32 @@ class SimulationPipeline:
 
         try:
             self._notify('RX', 'done', 'Computing BER...')
-
-            parser = LTSpiceRawParser(raw_path)
-            time = parser.get_time()
-            dout = parser.get_trace('V(dout)')
-
             cfg = self.config
-            bit_period = 1.0 / cfg.data_rate_bps
-            threshold = cfg.vcc_volts / 2  # Vref = VCC/2
 
-            # Only use bits that fit within the simulation time
-            t_max = time[-1]
-            max_bits = int(t_max / bit_period)
-            tx_bits_clipped = self._tx_bits[:max_bits]
-
-            from simulation.analysis import calculate_ber_from_transient
-            ber_result = calculate_ber_from_transient(
-                tx_bits_clipped, dout, time,
-                threshold=threshold,
-                bit_period=bit_period,
-                sample_offset=0.5,
+            from .spice_extract import compute_ber_from_spice
+            ber_result = compute_ber_from_spice(
+                raw_path,
+                bits_tx=self._tx_bits,
+                data_rate_bps=cfg.data_rate_bps,
+                vcc=cfg.vcc_volts,
                 skip_bits=2,
+                sample_offset=0.5,
             )
-
-            # If BER > 0.4, try inverted polarity (in case BPF inverts)
-            if ber_result['ber'] > 0.4:
-                inv_bits = 1 - tx_bits_clipped
-                inv_result = calculate_ber_from_transient(
-                    inv_bits, dout, time,
-                    threshold=threshold,
-                    bit_period=bit_period,
-                    sample_offset=0.5,
-                    skip_bits=2,
-                )
-                if inv_result['ber'] < ber_result['ber']:
-                    ber_result = inv_result
-                    ber_result['inverted'] = True
 
             # Store in RX outputs
             self.step_rx.outputs['ber'] = ber_result['ber']
             self.step_rx.outputs['ber_n_errors'] = ber_result['n_errors']
             self.step_rx.outputs['ber_n_bits'] = ber_result['n_bits_tested']
             self.step_rx.outputs['snr_est_dB'] = ber_result['snr_est_dB']
-            self.step_rx.outputs['rx_decisions'] = ber_result['rx_decisions']
+            self.step_rx.outputs['bits_rx'] = ber_result['bits_rx']
 
             ber = ber_result['ber']
+            inv_str = ' (inverted)' if ber_result.get('inverted') else ''
             self.step_rx.message += (
                 f' | BER={ber:.4e} '
-                f'({ber_result["n_errors"]}/{ber_result["n_bits_tested"]})'
+                f'({ber_result["n_errors"]}/{ber_result["n_bits_tested"]}){inv_str}'
             )
             self._notify('RX', 'done', self.step_rx.message)
-
-            # Also compute BER from BPF output (pre-comparator SNR)
-            try:
-                v_bpf = parser.get_trace('V(bpf_out)')
-                bpf_ber = calculate_ber_from_transient(
-                    tx_bits_clipped, v_bpf, time,
-                    threshold=cfg.vcc_volts / 2,
-                    bit_period=bit_period,
-                    sample_offset=0.5,
-                    skip_bits=2,
-                )
-                self.step_rx.outputs['bpf_snr_dB'] = bpf_ber['snr_est_dB']
-            except KeyError:
-                pass
 
             return ber_result
 
@@ -570,94 +581,280 @@ class SimulationPipeline:
     # Netlist generation helpers
     # -------------------------------------------------------------------------
 
-    def _noise_section(self, cfg) -> str:
+    def _noise_section(self, cfg, noise_pwl_path: Optional[str] = None) -> str:
         """Generate noise source SPICE lines if noise is enabled.
 
-        When enabled, changes the INA output from 'ina_out' to 'ina_out_clean',
-        then creates 'ina_out' = 'ina_out_clean' + noise terms. This injects
-        noise at the INA output without modifying subcircuit topology.
+        Phase 3: Uses calibrated PWL noise current source from the Python
+        6-source NoiseModel, injected at the sense resistor input (current domain).
+        Falls back to behavioral white() sources if no PWL is available.
         """
         if not cfg.noise_enable:
             return '* (noise sources disabled)'
 
+        lines = ['* === NOISE SOURCES ===']
+
+        # Prefer PWL noise injection (calibrated, 6-source)
+        if noise_pwl_path:
+            pwl_str = str(Path(noise_pwl_path).resolve()).replace('\\', '/')
+            lines.append('* Calibrated 6-source noise (from cosim.noise.NoiseModel)')
+            lines.append(f'* PWL file: {pwl_str}')
+            lines.append(f'Inoise sc_cathode sense_lo PWL file="{pwl_str}"')
+            return '\n'.join(lines)
+
+        # Fallback: behavioral white() noise at INA output
         gain = 10 ** (cfg.ina_gain_dB / 20)
         noise_terms = []
-        lines = ['* === NOISE SOURCES (injected at INA output) ===']
+        lines.append('* Behavioral noise (fallback, LTspice-specific)')
 
-        # INA322 input-referred voltage noise (~45 nV/√Hz)
-        en = cfg.ina_noise_nV_rtHz * 1e-9  # V/√Hz
-        en_out = en * gain  # Output-referred
-        lines.append(f'* INA input noise: {cfg.ina_noise_nV_rtHz} nV/rtHz '
-                      f'-> {en_out*1e6:.2f} uV/rtHz at output (gain={gain:.0f})')
+        en = cfg.ina_noise_nV_rtHz * 1e-9
+        en_out = en * gain
         noise_terms.append(f'{en_out:.4e} * white(13579)')
 
-        # Shot noise on photocurrent -> voltage noise via Rsense * gain
         if cfg.shot_noise_enable:
             q = 1.602e-19
             I_ph_est = cfg.photocurrent_A()
-            i_shot = np.sqrt(2 * q * I_ph_est)  # A/√Hz
-            v_shot_out = i_shot * cfg.r_sense_ohm * gain  # V/√Hz at INA output
-            lines.append(f'* Shot noise: i_n={i_shot:.2e} A/rtHz '
-                          f'-> {v_shot_out*1e6:.2f} uV/rtHz at output')
+            i_shot = np.sqrt(2 * q * I_ph_est)
+            v_shot_out = i_shot * cfg.r_sense_ohm * gain
             noise_terms.append(f'{v_shot_out:.4e} * white(24680)')
 
-        # Thermal noise from Rsense -> voltage noise via gain
         if cfg.thermal_noise_enable:
             kT = 1.38e-23 * 300
-            v_thermal = np.sqrt(4 * kT * cfg.r_sense_ohm)  # V/√Hz
-            v_thermal_out = v_thermal * gain  # V/√Hz at INA output
-            lines.append(f'* Rsense thermal: v_n={v_thermal:.2e} V/rtHz '
-                          f'-> {v_thermal_out*1e6:.4f} uV/rtHz at output')
+            v_thermal = np.sqrt(4 * kT * cfg.r_sense_ohm)
+            v_thermal_out = v_thermal * gain
             noise_terms.append(f'{v_thermal_out:.4e} * white(97531)')
 
-        # Build summing node: ina_out = ina_out_clean + noise
         noise_expr = ' + '.join(noise_terms)
-        lines.append(f'Bn_sum ina_out 0 V = V(ina_out_clean) + {noise_expr}')
+        lines.append(f'Bn_sum ina_out 0 V = {{V(ina_out_clean) + {noise_expr}}}')
 
         return '\n'.join(lines)
 
-    def _generate_rx_netlist(self, pwl_path: str) -> str:
-        """
-        Generate receiver SPICE netlist using PWL photocurrent source.
+    # -------------------------------------------------------------------------
+    # Config-driven subcircuit generators
+    # -------------------------------------------------------------------------
 
-        Uses FullSystemNetlist subcircuit library for proper behavioral
-        models (INA322 with 2-pole GBW, active BPF, comparator with delay).
-        Falls back to inline netlist if FullSystemNetlist is unavailable.
+    @staticmethod
+    def _subckt_solar_cell(cfg) -> str:
+        """Generate SOLAR_CELL subcircuit from SystemConfig fields."""
+        Cj = cfg.sc_cj_nF * 1e-9
+        Rsh = cfg.sc_rsh_kOhm * 1e3
+        R_lambda = cfg.sc_responsivity
+        Rs = getattr(cfg, 'pv_series_resistance_ohm', 2.5)
+        return f"""\
+.SUBCKT SOLAR_CELL anode cathode photo_in
+Gph cathode anode_int VALUE = {{V(photo_in) * {R_lambda}}}
+Rs anode_int anode {Rs}
+Cj anode_int cathode {Cj:.6e}
+Rsh anode_int cathode {Rsh:.1f}
+D1 anode_int cathode SOLAR_D
+.MODEL SOLAR_D D(IS=1e-10 N=1.5 RS=0.01)
+.ENDS SOLAR_CELL
+"""
+
+    @staticmethod
+    def _subckt_ina(cfg) -> str:
+        """Generate INA subcircuit from SystemConfig fields."""
+        gain = 10 ** (cfg.ina_gain_dB / 20)
+        gbw = cfg.ina_gbw_kHz * 1e3
+        f_3dB = gbw / gain
+        f_p2 = f_3dB * 10
+        C_p1 = 1 / (2 * np.pi * f_3dB * 1e3)
+        C_p2 = 1 / (2 * np.pi * f_p2 * 1e3)
+        return f"""\
+.SUBCKT INA INP INN OUT VCC VEE REF
+Rinp INP 0 1G
+Rinn INN 0 1G
+Rref REF 0 1G
+Ediff diff_int 0 INP INN {gain:.2f}
+Rp1 diff_int p1 1k
+Cp1 p1 0 {C_p1:.6e}
+Rp2 p1 p2 1k
+Cp2 p2 0 {C_p2:.6e}
+Bout OUT 0 V = {{MAX(MIN(V(p2) + V(REF), V(VCC)-0.05), V(VEE)+0.05)}}
+.ENDS INA
+"""
+
+    @staticmethod
+    def _subckt_bpf(cfg) -> str:
+        """Generate BPF_STAGE subcircuit from SystemConfig fields."""
+        Rhp = cfg.bpf_rhp
+        Chp = cfg.bpf_chp_pF * 1e-12
+        Rlp = cfg.bpf_rlp
+        Clp = cfg.bpf_clf_nF * 1e-9
+        return f"""\
+.SUBCKT BPF_STAGE inp out vcc vee vref
+Chp inp hp_out {Chp:.6e}
+Rhp hp_out vref {Rhp:.0f}
+Rin hp_out opamp_inn {Rlp:.0f}
+Rfb opamp_inn out {Rlp:.0f}
+Cfb opamp_inn out {Clp:.6e}
+Ediff_oa oa_diff 0 vref opamp_inn 100000
+Rpole_oa oa_diff oa_pole 1k
+Cpole_oa oa_pole 0 1.59n
+Bout_oa out 0 V = {{MAX(MIN(V(oa_pole), V(vcc)-0.02), V(vee)+0.02)}}
+.ENDS BPF_STAGE
+"""
+
+    @staticmethod
+    def _subckt_comparator(cfg) -> str:
+        """Generate COMPARATOR subcircuit from SystemConfig fields."""
+        delay_ns = getattr(cfg, 'comparator_prop_delay_ns', 260.0)
+        C_del = delay_ns  # pF with 1k resistor gives tau = delay_ns
+        return f"""\
+.SUBCKT COMPARATOR INP INN OUT VCC VEE
+Rinp INP 0 1T
+Rinn INN 0 1T
+Bcomp comp_int 0 V = {{(V(VCC)+V(VEE))/2 + (V(VCC)-V(VEE))/2 * tanh(1e4*(V(INP)-V(INN)))}}
+Rdel comp_int del_out 1k
+Cdel del_out 0 {C_del:.0f}p
+Eout OUT 0 del_out 0 1
+.ENDS COMPARATOR
+"""
+
+    @staticmethod
+    def _subckt_dcdc(cfg) -> str:
+        """Generate BOOST_DCDC subcircuit from SystemConfig fields."""
+        L = cfg.dcdc_l_uH * 1e-6
+        Cp = cfg.dcdc_cp_uF * 1e-6
+        Cl = cfg.dcdc_cl_uF * 1e-6
+        Rload = cfg.r_load_ohm
+        dcr = getattr(cfg, 'dcdc_inductor_dcr_ohm', 0.5)
+        return f"""\
+.SUBCKT BOOST_DCDC vin vout gnd phi
+Cp vin gnd {Cp:.6e}
+L1 vin sw {L:.6e}
+R_dcr sw sw2 {dcr}
+M1 sw2 phi gnd gnd BOOST_SW W=1m L=1u
+.MODEL BOOST_SW NMOS(VTO=0.8 KP=200m RD=0.026 RS=0.026)
+Ds sw2 vout SCHOTTKY_BOOST
+.MODEL SCHOTTKY_BOOST D(IS=1e-5 N=1.05 RS=0.1 CJO=50p VJ=0.3 BV=40)
+Cl vout gnd {Cl:.6e}
+Rload vout gnd {Rload:.0f}
+.ENDS BOOST_DCDC
+"""
+
+    def _generate_rx_netlist(self, pwl_path: str,
+                             noise_pwl_path: Optional[str] = None) -> str:
+        """
+        Generate receiver SPICE netlist from SystemConfig fields.
+
+        Topology adapts to cfg.rx_topology:
+            - ina_bpf_comp: Solar cell → R_sense → INA → BPF(×N) → Comparator
+            - amp_slicer: Solar cell → R_sense → E-source amp → Comparator
+            - direct: Solar cell → R_sense → output
+
+        All subcircuit parameters are derived from SystemConfig — no
+        paper-specific imports.
         """
         cfg = self.config
         pwl_abs = Path(pwl_path).resolve()
         if not pwl_abs.exists():
             raise FileNotFoundError(f"PWL file not found: {pwl_abs}")
-        # LTspice needs forward slashes or escaped backslashes in paths
         pwl_str = str(pwl_abs).replace('\\', '/')
         t_stop = cfg.t_stop_s
         t_step = t_stop / 1000
+        topology = getattr(cfg, 'rx_topology', 'ina_bpf_comp')
 
-        try:
-            from systems.kadirvelu2021_netlist import SubcircuitLibrary
-            from systems.kadirvelu2021 import KadirveluParams
-            lib = SubcircuitLibrary(KadirveluParams())
-            subckt_defs = (lib.solar_cell() + '\n' +
-                           lib.ina322() + '\n' +
-                           lib.bpf_stage() + '\n' +
-                           lib.comparator() + '\n' +
-                           lib.dcdc_boost())
-            use_subcircuits = True
-        except ImportError:
-            subckt_defs = ''
-            use_subcircuits = False
-
-        G_ch = cfg.optical_channel_gain()
+        _ch = OpticalChannel.from_config(cfg)
+        G_ch = _ch.channel_gain()
         P_rx_avg = cfg.led_radiated_power_mW * 1e-3 * G_ch
 
-        if use_subcircuits:
-            # Full netlist using proper subcircuit models
+        # Build subcircuit definitions based on topology
+        subckt_defs = self._subckt_solar_cell(cfg)
+        if topology == 'ina_bpf_comp':
+            subckt_defs += '\n' + self._subckt_ina(cfg)
+            if cfg.bpf_stages > 0:
+                subckt_defs += '\n' + self._subckt_bpf(cfg)
+            if cfg.comparator_part != 'N/A':
+                subckt_defs += '\n' + self._subckt_comparator(cfg)
+        if cfg.dcdc_enable:
+            subckt_defs += '\n' + self._subckt_dcdc(cfg)
+
+        # Build data path based on topology
+        data_path_lines = []
+        data_path_lines.append('* --- Solar Cell ---')
+        data_path_lines.append('Xsc sc_anode sc_cathode optical_power SOLAR_CELL')
+        data_path_lines.append('')
+        data_path_lines.append(f'* --- Current Sense Resistor ---')
+        data_path_lines.append(f'Rsense sc_cathode sense_lo {cfg.r_sense_ohm}')
+        data_path_lines.append('')
+        data_path_lines.append('* --- Ground reference ---')
+        data_path_lines.append('Vgnd_ref sense_lo 0 DC 0')
+
+        if topology == 'ina_bpf_comp':
+            # INA → BPF(×N) → Comparator
+            ina_out_node = 'ina_out_clean' if cfg.noise_enable and not noise_pwl_path else 'ina_out'
+            data_path_lines.append('')
+            data_path_lines.append(f'* --- Instrumentation Amplifier ({cfg.ina_gain_dB:.0f} dB) ---')
+            data_path_lines.append(f'Xina sense_lo sc_cathode {ina_out_node} vcc vee vref INA')
+            data_path_lines.append(self._noise_section(cfg, noise_pwl_path))
+
+            # BPF stages
+            prev_node = 'ina_out'
+            for i in range(cfg.bpf_stages):
+                out_node = f'bpf{i+1}_out' if i < cfg.bpf_stages - 1 else 'bpf_out'
+                data_path_lines.append(f'Xbpf{i+1} {prev_node} {out_node} vcc vee vref BPF_STAGE')
+                prev_node = out_node
+
+            # Comparator
+            comp_input = 'bpf_out' if cfg.bpf_stages > 0 else 'ina_out'
+            if cfg.comparator_part != 'N/A':
+                data_path_lines.append(f'Xcomp {comp_input} vref dout vcc vee COMPARATOR')
+            else:
+                data_path_lines.append(f'* No comparator — use BPF output as dout')
+                data_path_lines.append(f'Eout_buf dout 0 {comp_input} 0 1')
+
+        elif topology == 'amp_slicer':
+            # Simple voltage amplifier + comparator/slicer
+            gain = 10 ** (cfg.ina_gain_dB / 20) if cfg.ina_gain_dB > 0 else cfg.amp_gain_linear
+            data_path_lines.append('')
+            data_path_lines.append(f'* --- Voltage Amplifier (gain={gain:.1f}) ---')
+            data_path_lines.append(f'Eamp amp_out 0 VALUE = {{V(sense_lo) * {-gain:.2f} + {cfg.vcc_volts/2}}}')
+            data_path_lines.append(self._noise_section(cfg, noise_pwl_path))
+            data_path_lines.append(f'* --- Slicer/Comparator ---')
+            data_path_lines.append(f'Bcomp dout 0 V = {{{cfg.vcc_volts} * (1 + tanh(1000 * (V(amp_out) - {cfg.vcc_volts/2}))) / 2}}')
+
+        else:  # direct
+            # Just output sense voltage
+            data_path_lines.append('')
+            data_path_lines.append(f'* --- Direct output (no analog chain) ---')
+            data_path_lines.append(f'Eout_buf dout 0 sense_lo 0 {-1}')
+            data_path_lines.append(self._noise_section(cfg, noise_pwl_path))
+
+        data_path_lines.append('')
+        data_path_lines.append('* --- Output measurement ---')
+        data_path_lines.append('Rout_data dout 0 1MEG')
+
+        data_path = '\n'.join(data_path_lines)
+
+        # Build DC-DC section
+        dcdc_section = ''
+        if cfg.dcdc_enable:
             fsw = cfg.dcdc_fsw_kHz * 1e3
-            netlist = f"""\
+            dcdc_section = f"""\
 * =====================================================================
-* LiFi-PV Receiver — Co-Simulation Netlist
-* Generated by cosim.pipeline (using FullSystemNetlist subcircuits)
+* DC-DC CONVERTER (Power Path)
+* =====================================================================
+Vphi phi 0 PULSE(0 {cfg.vcc_volts} 0 10n 10n {0.5/fsw:.6e} {1/fsw:.6e})
+Xdcdc sc_anode dcdc_out 0 phi BOOST_DCDC
+Rout_dcdc dcdc_out 0 1MEG
+"""
+
+        # Build measurements
+        meas_lines = [f'.MEAS TRAN v_sc_avg AVG V(sc_anode) FROM={t_stop/2:.2e} TO={t_stop:.2e}']
+        if topology == 'ina_bpf_comp':
+            meas_lines.append(f'.MEAS TRAN v_ina_rms RMS V(ina_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
+            if cfg.bpf_stages > 0:
+                meas_lines.append(f'.MEAS TRAN v_bpf_rms RMS V(bpf_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
+                meas_lines.append(f'.MEAS TRAN v_bpf_pp PP V(bpf_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
+        if cfg.dcdc_enable:
+            meas_lines.append(f'.MEAS TRAN v_dcdc_avg AVG V(dcdc_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
+        measurements = '\n'.join(meas_lines)
+
+        netlist = f"""\
+* =====================================================================
+* LiFi-PV Receiver — Co-Simulation Netlist (config-driven)
 * Config: {cfg.preset_name or 'custom'}
+* Topology: {topology}
 * =====================================================================
 * Channel gain:    G_ch = {G_ch:.6e}
 * P_rx (avg):      {P_rx_avg*1e6:.2f} uW
@@ -682,51 +879,14 @@ Vref vref 0 DC {cfg.vcc_volts / 2}
 * =====================================================================
 * OPTICAL INPUT (PWL bridge from channel model)
 * =====================================================================
-* V(optical_power) represents received optical power in W (1V = 1W)
 Voptical optical_power 0 PWL file="{pwl_str}"
 
 * =====================================================================
 * RECEIVER - DATA PATH
 * =====================================================================
+{data_path}
 
-* --- Solar Cell ---
-Xsc sc_anode sc_cathode optical_power SOLAR_CELL
-
-* --- Current Sense Resistor ---
-Rsense sc_cathode sense_lo {cfg.r_sense_ohm}
-
-* --- Ground reference ---
-Vgnd_ref sense_lo 0 DC 0
-
-* --- INA322 Instrumentation Amplifier (40 dB) ---
-* INP=sense_lo (0V), INN=sc_cathode (negative) → positive output + Vref offset
-Xina sense_lo sc_cathode {'ina_out_clean' if cfg.noise_enable else 'ina_out'} vcc vee vref INA322
-{self._noise_section(cfg)}
-
-* --- Band-Pass Filter Stage 1 ---
-Xbpf1 ina_out bpf1_out vcc vee vref BPF_STAGE
-
-* --- Band-Pass Filter Stage 2 ---
-Xbpf2 bpf1_out bpf_out vcc vee vref BPF_STAGE
-
-* --- Comparator (Data Recovery) ---
-Xcomp bpf_out vref dout vcc vee COMPARATOR
-
-* --- Output measurement ---
-Rout_data dout 0 1MEG
-
-* =====================================================================
-* DC-DC CONVERTER (Power Path)
-* =====================================================================
-* Switching clock (fsw = {cfg.dcdc_fsw_kHz:.0f} kHz)
-Vphi phi 0 PULSE(0 3.3 0 10n 10n {0.5/fsw:.6e} {1/fsw:.6e})
-
-* Boost converter
-Xdcdc sc_anode dcdc_out 0 phi BOOST_DCDC
-
-* DC-DC output measurement
-Rout_dcdc dcdc_out 0 1MEG
-
+{dcdc_section}
 * =====================================================================
 * SIMULATION COMMANDS
 * =====================================================================
@@ -734,55 +894,8 @@ Rout_dcdc dcdc_out 0 1MEG
 .OPTIONS reltol=0.001 abstol=1e-12 vntol=1e-6
 
 * Measurements
-.MEAS TRAN v_ina_rms RMS V(ina_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}
-.MEAS TRAN v_bpf_rms RMS V(bpf_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}
-.MEAS TRAN v_bpf_pp PP V(bpf_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}
-.MEAS TRAN v_sc_avg AVG V(sc_anode) FROM={t_stop/2:.2e} TO={t_stop:.2e}
-.MEAS TRAN v_dcdc_avg AVG V(dcdc_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}
+{measurements}
 
-.END
-"""
-        else:
-            # Fallback: inline simplified netlist
-            Cj = cfg.sc_cj_nF * 1e-9
-            Rsh = cfg.sc_rsh_kOhm * 1e3
-            gain = 10 ** (cfg.ina_gain_dB / 20)
-            gbw = cfg.ina_gbw_kHz * 1e3
-            f0 = gbw / gain
-            R_hp = cfg.bpf_rhp
-            C_hp = cfg.bpf_chp_pF * 1e-12
-            R_lp = cfg.bpf_rlp
-            C_lp = cfg.bpf_clf_nF * 1e-9
-
-            netlist = f"""\
-* LiFi-PV Receiver — Co-Simulation (inline models)
-* Config: {cfg.preset_name or 'custom'}
-
-.OPTIONS reltol=0.001 abstol=1e-12 vntol=1e-6
-
-Iph 0 sc_anode PWL file="{pwl_str}"
-Cj sc_anode 0 {Cj}
-Rsh sc_anode 0 {Rsh}
-Rsense sc_anode ina_inp {cfg.r_sense_ohm}
-
-Eina ina_raw 0 VALUE={{V(ina_inp) * {gain}}}
-Rina ina_raw ina_out {1/(2*3.14159*f0):.6e}
-Cina ina_out 0 1
-
-Chp1 ina_out hp1_out {C_hp}
-Rhp1 hp1_out 0 {R_hp}
-Rlp1 hp1_out lp1_out {R_lp}
-Clp1 lp1_out 0 {C_lp}
-
-Chp2 lp1_out hp2_out {C_hp}
-Rhp2 hp2_out 0 {R_hp}
-Rlp2 hp2_out bpf_out {R_lp}
-Clp2 bpf_out 0 {C_lp}
-
-Bcomp dout 0 V = {{3.3 * (1 + tanh(1000 * V(bpf_out))) / 2}}
-Rout_data dout 0 1MEG
-
-.tran {t_step:.2e} {t_stop:.2e} uic
 .END
 """
         return netlist

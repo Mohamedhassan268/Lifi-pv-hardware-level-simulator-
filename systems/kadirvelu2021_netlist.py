@@ -156,7 +156,7 @@ Cp2 p2 0 {C_p2:.6e}
 
 * Output buffer with REF offset and rail clamping
 * V_out = G*(Vinp - Vinn) + V(REF), clamped to rails
-Bout OUT 0 V = MAX(MIN(V(p2) + V(REF), V(VCC)-0.05), V(VEE)+0.05)
+Bout OUT 0 V = {{MAX(MIN(V(p2) + V(REF), V(VCC)-0.05), V(VEE)+0.05)}}
 
 .ENDS INA322
 """
@@ -207,7 +207,7 @@ Cfb opamp_inn out {Clp:.6e}
 Ediff_oa oa_diff 0 vref opamp_inn 100000
 Rpole_oa oa_diff oa_pole 1k
 Cpole_oa oa_pole 0 1.59n
-Bout_oa out 0 V = MAX(MIN(V(oa_pole), V(vcc)-0.02), V(vee)+0.02)
+Bout_oa out 0 V = {{MAX(MIN(V(oa_pole), V(vcc)-0.02), V(vee)+0.02)}}
 
 .ENDS BPF_STAGE
 """
@@ -228,8 +228,8 @@ Bout_oa out 0 V = MAX(MIN(V(oa_pole), V(vcc)-0.02), V(vee)+0.02)
 Rinp INP 0 1T
 Rinn INN 0 1T
 
-* Comparator decision
-Bcomp comp_int 0 V = IF(V(INP)-V(INN) > 0, V(VCC), V(VEE))
+* Comparator decision (tanh soft-switch for ngspice compatibility)
+Bcomp comp_int 0 V = {(V(VCC)+V(VEE))/2 + (V(VCC)-V(VEE))/2 * tanh(1e4*(V(INP)-V(INN)))}
 
 * Propagation delay (RC: tau = 260ns)
 Rdel comp_int del_out 1k
@@ -272,7 +272,7 @@ M1 led_cathode gate_drive gnd gnd BSD235N_SW W=1m L=1u
 Vled vcc led_cathode DC 3.2
 
 * Optical output: P_opt = GLED * I(Vled) * T_lens
-Bopt optical_out gnd V = {GLED * T_lens} * I(Vled)
+Bopt optical_out gnd V = {{{GLED * T_lens} * I(Vled)}}
 
 .ENDS TX_DRIVER
 """

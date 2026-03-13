@@ -30,10 +30,6 @@ _PRESET_INFO = {
         'Indoor SLIPT System',
         'Communication + energy harvesting at 30 cm, 5 kbps OOK.\n'
         'SPICE engine | Full RX chain (INA + BPF + comparator + DC-DC)'),
-    'fakidis2020': (
-        'Indoor VLC Link Budget',
-        'Detailed link budget analysis at 50 cm with OOK modulation.\n'
-        'SPICE engine | Focus on receiver sensitivity'),
     'sarwar2017': (
         'High-Speed OFDM LiFi',
         'OFDM with 16-QAM at 1.25 m, testing multi-carrier performance.\n'

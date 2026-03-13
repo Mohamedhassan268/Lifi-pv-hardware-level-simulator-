@@ -2,7 +2,9 @@
   "preset_name": "gonzalez2024",
   "paper_reference": "González-Uriarte et al., IEEE LATINCOM 2024 - Design and Implementation of a Low-Cost VLC Photovoltaic Panel-Based Receiver",
 
-  "simulation_engine": "spice",
+  "simulation_engine": "python",
+  "rx_topology": "amp_slicer",
+  "dcdc_enable": false,
   "modulation": "OOK_Manchester",
 
   "led_part": "White LED 3W",

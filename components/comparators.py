@@ -145,8 +145,8 @@ class TLV7011(ComparatorBase):
 Rinp INP 0 1T
 Rinn INN 0 1T
 
-* Comparator decision (ideal)
-Bcomp comp_int 0 V = IF(V(INP)-V(INN) > 0, V(VCC), V(VEE))
+* Comparator decision (tanh soft-switch for ngspice compatibility)
+Bcomp comp_int 0 V = {{(V(VCC)+V(VEE))/2 + (V(VCC)-V(VEE))/2 * tanh(1e4*(V(INP)-V(INN)))}}
 
 * Propagation delay model (RC)
 Rdel comp_int del_out 1k

@@ -42,6 +42,13 @@ class SystemConfig:
     distance_m: float = 0.325
     tx_angle_deg: float = 0.0
     rx_tilt_deg: float = 0.0
+    fov_half_angle_deg: float = 90.0      # Receiver FOV half-angle (90 = hemispherical)
+    beer_lambert_enabled: bool = False     # Enable atmospheric attenuation
+    n_reflections: int = 0                 # Number of wall-bounce reflections (0 = LOS only)
+    room_length_m: float = 5.0            # Room dimensions for multipath
+    room_width_m: float = 5.0
+    room_height_m: float = 3.0
+    wall_reflectivity: float = 0.7        # Diffuse wall reflectance (0-1)
 
     # -- Receiver --------------------------------------------------------------
     pv_part: str = 'KXOB25-04X3F'
@@ -88,9 +95,23 @@ class SystemConfig:
 
     # -- Noise Configuration ---------------------------------------------------
     noise_enable: bool = False
-    ina_noise_nV_rtHz: float = 45.0       # INA322 input-referred voltage noise
-    shot_noise_enable: bool = True         # Shot noise on photocurrent
-    thermal_noise_enable: bool = True      # Thermal noise on Rsense
+    noise_shot_enable: bool = True            # Source 1: shot noise
+    noise_thermal_enable: bool = True         # Source 2: thermal noise
+    noise_ambient_enable: bool = True         # Source 3: ambient light noise
+    noise_amplifier_enable: bool = True       # Source 4: amplifier noise
+    noise_adc_enable: bool = False            # Source 5: ADC quantization noise
+    noise_processing_enable: bool = False     # Source 6: processing/threshold noise
+    ina_noise_nV_rtHz: float = 45.0           # INA322 input-referred voltage noise density
+    ina_noise_current_pA_rtHz: float = 0.1    # INA322 input-referred current noise density
+    ambient_illuminance_lux: float = 0.0      # Background ambient light level
+    comparator_offset_mV: float = 1.0         # TLV7011 input offset voltage
+    comparator_jitter_ns: float = 5.0         # TLV7011 propagation delay jitter (1σ)
+    adc_bits: int = 12                        # ADC resolution (0 = no ADC in chain)
+    adc_vref: float = 3.3                     # ADC reference voltage
+
+    # Legacy aliases (backward compat with old presets)
+    shot_noise_enable: bool = True
+    thermal_noise_enable: bool = True
 
     # -- Multi-Paper Extensions ------------------------------------------------
     # OFDM parameters (Sarwar 2017, Oliveira 2024)
@@ -121,6 +142,32 @@ class SystemConfig:
     notch_freq_hz: Optional[float] = None # notch filter for mains rejection
     notch_Q: float = 30.0
 
+    # -- Phase 4: Generalized Architecture ---------------------------------------
+    # RX topology: 'ina_bpf_comp' | 'amp_slicer' | 'direct' | 'auto'
+    # 'auto' means auto-detect from INA/BPF/amp fields in __post_init__
+    rx_topology: str = 'auto'
+    dcdc_enable: Optional[bool] = None    # None = auto-detect from dcdc_fsw_kHz > 0
+
+    # -- Phase 2: Enhanced Python Engine ----------------------------------------
+    # PV Cell ODE model
+    pv_ode_enable: bool = False           # Enable transient ODE solver (False = simple I=R*P)
+    pv_dark_current_A: float = 1e-10      # Diode saturation current I_s
+    pv_ideality_factor: float = 1.5       # Diode ideality factor n
+    pv_vbi_V: float = 1.1                 # Built-in voltage for C_j(V) model
+    pv_series_resistance_ohm: float = 2.5 # Series resistance Rs
+
+    # LED TX model
+    led_bandwidth_limit_enable: bool = False  # Apply LED frequency response to P_tx
+
+    # DC-DC converter (Python model params)
+    dcdc_rds_on_mohm: float = 52.0        # MOSFET on-resistance (NTS4409)
+    dcdc_diode_vf_V: float = 0.3          # Schottky forward voltage
+    dcdc_inductor_dcr_ohm: float = 0.5    # Inductor DC resistance
+
+    # Receiver chain model
+    rx_chain_enable: bool = False          # Enable detailed RX chain (False = simple TIA+demod)
+    comparator_prop_delay_ns: float = 260.0  # TLV7011 propagation delay
+
     # -- Validation Targets (optional) -----------------------------------------
     target_harvested_power_uW: Optional[float] = None
     target_ber: Optional[float] = None
@@ -139,9 +186,28 @@ class SystemConfig:
     _VALID_MODULATIONS = frozenset({
         'OOK', 'OOK_Manchester', 'OFDM', 'BFSK', 'PWM_ASK',
     })
+    _VALID_TOPOLOGIES = frozenset({
+        'ina_bpf_comp', 'amp_slicer', 'direct', 'auto',
+    })
 
     def __post_init__(self):
-        """Validate parameter ranges after initialization."""
+        """Validate parameter ranges and auto-detect derived fields."""
+        # --- Auto-detect rx_topology ---
+        if self.rx_topology == 'auto':
+            has_ina = self.ina_gain_dB > 0 and self.ina_part != 'N/A'
+            has_bpf = self.bpf_stages > 0
+            has_amp = self.amp_gain_linear > 1 or (has_ina and not has_bpf)
+            if has_ina and has_bpf:
+                object.__setattr__(self, 'rx_topology', 'ina_bpf_comp')
+            elif has_amp or (has_ina and not has_bpf):
+                object.__setattr__(self, 'rx_topology', 'amp_slicer')
+            else:
+                object.__setattr__(self, 'rx_topology', 'direct')
+
+        # --- Auto-detect dcdc_enable ---
+        if self.dcdc_enable is None:
+            object.__setattr__(self, 'dcdc_enable', self.dcdc_fsw_kHz > 0)
+
         errors = []
 
         if self.distance_m <= 0:
@@ -153,10 +219,33 @@ class SystemConfig:
                 f"modulation must be one of {sorted(self._VALID_MODULATIONS)}, "
                 f"got '{self.modulation}'"
             )
+        if self.rx_topology not in self._VALID_TOPOLOGIES:
+            errors.append(
+                f"rx_topology must be one of {sorted(self._VALID_TOPOLOGIES)}, "
+                f"got '{self.rx_topology}'"
+            )
         if self.bpf_f_low_Hz >= self.bpf_f_high_Hz and self.bpf_f_low_Hz > 0:
             errors.append(
                 f"bpf_f_low_Hz ({self.bpf_f_low_Hz}) must be < "
                 f"bpf_f_high_Hz ({self.bpf_f_high_Hz})"
+            )
+
+        # Channel validation
+        if self.fov_half_angle_deg <= 0 or self.fov_half_angle_deg > 90:
+            errors.append(
+                f"fov_half_angle_deg must be in (0, 90], got {self.fov_half_angle_deg}"
+            )
+        if self.n_reflections < 0:
+            errors.append(f"n_reflections must be >= 0, got {self.n_reflections}")
+        if self.wall_reflectivity < 0 or self.wall_reflectivity > 1:
+            errors.append(
+                f"wall_reflectivity must be in [0, 1], got {self.wall_reflectivity}"
+            )
+
+        # Noise validation
+        if self.ambient_illuminance_lux < 0:
+            errors.append(
+                f"ambient_illuminance_lux must be >= 0, got {self.ambient_illuminance_lux}"
             )
 
         # Physical quantities must be non-negative
