@@ -3,6 +3,8 @@
   "paper_reference": "Sarwar et al., ICOCN 2017 - Visible Light Communication Using a Solar-Panel Receiver",
 
   "simulation_engine": "python",
+  "rx_topology": "direct",
+  "dcdc_enable": false,
   "modulation": "OFDM",
 
   "led_part": "Blue LED 3W",

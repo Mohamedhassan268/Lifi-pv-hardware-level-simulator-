@@ -3,6 +3,8 @@
   "paper_reference": "Correa-Morales et al., Scientific Reports 2025 - Solar panel-based VLC for greenhouse applications",
 
   "simulation_engine": "python",
+  "rx_topology": "amp_slicer",
+  "dcdc_enable": false,
   "modulation": "PWM_ASK",
 
   "led_part": "30W LED Panel",

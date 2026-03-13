@@ -79,11 +79,6 @@ class TestSystemConfig:
         cfg = SystemConfig.from_preset('kadirvelu2021')
         assert cfg.preset_name != ''
 
-    def test_from_preset_fakidis2020(self):
-        from cosim.system_config import SystemConfig
-        cfg = SystemConfig.from_preset('fakidis2020')
-        assert cfg.preset_name != '' or True  # preset exists, loaded OK
-
     def test_list_presets_at_least_2(self):
         from cosim.system_config import SystemConfig
         presets = SystemConfig.list_presets()
@@ -500,3 +495,75 @@ class TestGUIImports:
                 pytest.skip(f"PyQt6 not available: {exc}")
             else:
                 raise
+
+
+# ============================================================================
+# 11. Preset Smoke Tests (Phase 4)
+# ============================================================================
+
+class TestPresetSmoke:
+    """Load all presets and run Python engine — no crashes."""
+
+    _ALL_PRESETS = [
+        'kadirvelu2021', 'gonzalez2024',
+        'correa2025', 'sarwar2017', 'xu2024', 'oliveira2024',
+    ]
+
+    def test_all_presets_load(self):
+        from cosim.system_config import SystemConfig
+        for name in self._ALL_PRESETS:
+            cfg = SystemConfig.from_preset(name)
+            assert cfg.preset_name == name
+            assert cfg.rx_topology in ('ina_bpf_comp', 'amp_slicer', 'direct')
+            assert isinstance(cfg.dcdc_enable, bool)
+
+    def test_rx_topology_auto_detection(self):
+        """Auto-detection matches explicit preset values."""
+        from cosim.system_config import SystemConfig
+        for name in self._ALL_PRESETS:
+            cfg_explicit = SystemConfig.from_preset(name)
+            # Rebuild with auto-detection by removing rx_topology
+            d = cfg_explicit.to_dict()
+            d['rx_topology'] = 'auto'
+            cfg_auto = SystemConfig(**d)
+            assert cfg_auto.rx_topology == cfg_explicit.rx_topology, (
+                f"{name}: auto={cfg_auto.rx_topology} != explicit={cfg_explicit.rx_topology}"
+            )
+
+    @pytest.mark.parametrize("preset_name", _ALL_PRESETS)
+    def test_python_engine_runs(self, preset_name):
+        """Each preset runs through Python engine without error."""
+        from cosim.system_config import SystemConfig
+        from cosim.python_engine import run_python_simulation
+        cfg = SystemConfig.from_preset(preset_name)
+        # Force python + small n_bits for speed
+        d = cfg.to_dict()
+        d['simulation_engine'] = 'python'
+        d['n_bits'] = 20
+        cfg = SystemConfig(**d)
+        result = run_python_simulation(cfg)
+        assert 'ber' in result
+        assert 'time' in result
+        assert 'P_tx' in result
+        assert 'bits_tx' in result
+        assert len(result['bits_tx']) == 20
+
+    @pytest.mark.parametrize("preset_name", _ALL_PRESETS)
+    def test_pipeline_netlist_generation(self, preset_name, tmp_path):
+        """Pipeline generates a valid netlist for each preset."""
+        from cosim.system_config import SystemConfig
+        from cosim.pipeline import SimulationPipeline
+        cfg = SystemConfig.from_preset(preset_name)
+        d = cfg.to_dict()
+        d['n_bits'] = 10
+        cfg = SystemConfig(**d)
+        (tmp_path / 'pwl').mkdir()
+        (tmp_path / 'netlists').mkdir()
+        (tmp_path / 'raw').mkdir()
+        pipe = SimulationPipeline(cfg, tmp_path)
+        pipe.run_step_tx()
+        pipe.run_step_channel()
+        pwl_path = pipe.step_channel.outputs.get('optical_pwl')
+        netlist = pipe._generate_rx_netlist(pwl_path)
+        assert '.END' in netlist
+        assert 'SOLAR_CELL' in netlist

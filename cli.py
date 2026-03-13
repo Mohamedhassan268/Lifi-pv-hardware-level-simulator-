@@ -66,6 +66,21 @@ def cmd_test(args):
     check("Netlist",      lambda: __import__('systems.kadirvelu2021_netlist', fromlist=['FullSystemNetlist']).FullSystemNetlist().generate())
     check("Simulation",   lambda: __import__('systems.kadirvelu2021', fromlist=['KadirveluSimulation']).KadirveluSimulation().calculate_theoretical_values())
 
+    # Phase 4: Preset smoke tests
+    def _check_presets():
+        from cosim.system_config import SystemConfig
+        from cosim.python_engine import run_python_simulation
+        for name in SystemConfig.list_presets():
+            cfg = SystemConfig.from_preset(name)
+            assert cfg.rx_topology in ('ina_bpf_comp', 'amp_slicer', 'direct'), f"{name}: bad topology"
+            d = cfg.to_dict()
+            d['simulation_engine'] = 'python'
+            d['n_bits'] = 20
+            cfg_small = SystemConfig(**d)
+            result = run_python_simulation(cfg_small)
+            assert 'ber' in result and 'time' in result, f"{name}: missing result keys"
+    check("Presets (6)", _check_presets)
+
     print(f"\n  {ok} passed, {fail} failed")
 
 
@@ -302,6 +317,38 @@ def cmd_validate(args):
         print(f"\n  {total}/{len(results)} papers passed")
 
 
+def cmd_compare(args):
+    """Run pipeline validation: compare all presets against paper targets."""
+    from papers.pipeline_validation import validate_all, validate_preset, cross_validate
+
+    out = args.output or str(Path('workspace') / 'validation_pipeline')
+
+    if args.cross:
+        _header("CROSS-VALIDATION: Standalone vs Pipeline")
+        cross_validate(output_dir=out, verbose=True)
+    elif args.preset:
+        _header(f"PIPELINE VALIDATION: {args.preset}")
+        result = validate_preset(args.preset, verbose=True)
+        status = "PASS" if result['passed'] else "REVIEW"
+        print(f"\n  Result: {status}")
+    else:
+        _header("PIPELINE VALIDATION: All Presets")
+        validate_all(output_dir=out, verbose=True)
+
+
+def cmd_sensitivity(args):
+    """Run parameter sensitivity analysis."""
+    from sensitivity_analysis import run_sensitivity_analysis
+
+    presets = [args.preset] if args.preset else None
+    _header("SENSITIVITY ANALYSIS")
+    run_sensitivity_analysis(
+        presets=presets,
+        output_dir=args.output,
+        fig=args.fig or 'all',
+    )
+
+
 def cmd_ltspice(args):
     """Check LTspice installation."""
     from cosim.ltspice_runner import LTSpiceRunner, find_ltspice
@@ -394,6 +441,19 @@ def build_parser():
     va.add_argument('--list', action='store_true', help='List available papers')
     va.add_argument('-o', '--output', help='Output directory')
 
+    # compare (pipeline validation)
+    cp = sub.add_parser('compare', help='Compare pipeline results against paper targets')
+    cp.add_argument('--preset', help='Single preset to validate')
+    cp.add_argument('--cross', action='store_true', help='Cross-validate standalone vs pipeline')
+    cp.add_argument('-o', '--output', help='Output directory')
+
+    # sensitivity
+    se = sub.add_parser('sensitivity', help='Parameter sensitivity analysis')
+    se.add_argument('--preset', help='Single preset (default: all 3 representative)')
+    se.add_argument('--fig', choices=['all', 'sweeps', 'tornado', 'comparison', 'temperature', 'table'],
+                    default='all', help='Which figure to generate')
+    se.add_argument('-o', '--output', help='Output directory')
+
     return p
 
 
@@ -419,6 +479,8 @@ def main():
         'presets':    cmd_presets,
         'ltspice':    cmd_ltspice,
         'validate':   cmd_validate,
+        'compare':    cmd_compare,
+        'sensitivity': cmd_sensitivity,
     }
 
     if args.command in commands:

@@ -3,6 +3,8 @@
   "paper_reference": "Xu et al., EWSN 2024 - Sunlight-Duo: Exploiting Sunlight for Simultaneous Energy Harvesting & Communication",
 
   "simulation_engine": "python",
+  "rx_topology": "direct",
+  "dcdc_enable": false,
   "modulation": "BFSK",
 
   "led_part": "Sunlight (passive)",

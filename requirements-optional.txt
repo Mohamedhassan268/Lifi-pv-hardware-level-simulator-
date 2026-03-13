@@ -1,0 +1,15 @@
+# Optional dependencies — install with:
+#   pip install -r requirements-optional.txt
+
+# === SPICE Integration ===
+# Enables PySpice-based circuit simulation (fallback: pure Python engine)
+PySpice>=1.5
+
+# === PaperLens (AI Paper Analysis) ===
+# Powers the AI paper reader dialog in the GUI
+google-genai>=1.0          # Google Gemini API (gemini-2.0-flash)
+pdfplumber>=0.10           # PDF text + table extraction
+
+# === Security ===
+# Secure API key storage (fallback: Qt settings)
+keyring>=25.0

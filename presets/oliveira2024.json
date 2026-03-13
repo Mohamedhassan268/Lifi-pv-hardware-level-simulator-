@@ -3,6 +3,8 @@
   "paper_reference": "Oliveira et al., Light: Science & Applications 2024 - Reconfigurable MIMO-based self-powered battery-less light communication system",
 
   "simulation_engine": "python",
+  "rx_topology": "direct",
+  "dcdc_enable": false,
   "modulation": "OFDM",
 
   "led_part": "Red Laser 658nm",

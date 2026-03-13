@@ -27,10 +27,10 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 # ============================================================================
 
 class TestPresetLoading:
-    """All 7 presets load without error and have required fields."""
+    """All 6 presets load without error and have required fields."""
 
     ALL_PRESETS = [
-        'kadirvelu2021', 'fakidis2020', 'sarwar2017',
+        'kadirvelu2021', 'sarwar2017',
         'correa2025', 'xu2024', 'oliveira2024', 'gonzalez2024',
     ]
 
@@ -94,11 +94,6 @@ class TestEngineAssignment:
     def test_kadirvelu_uses_spice(self):
         from cosim.system_config import SystemConfig
         cfg = SystemConfig.from_preset('kadirvelu2021')
-        assert cfg.simulation_engine == 'spice'
-
-    def test_fakidis_uses_spice(self):
-        from cosim.system_config import SystemConfig
-        cfg = SystemConfig.from_preset('fakidis2020')
         assert cfg.simulation_engine == 'spice'
 
     def test_gonzalez_uses_spice(self):

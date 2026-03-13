@@ -21,7 +21,7 @@ Rinp INP 0 1T
 Rinn INN 0 1T
 
 * Comparator decision (ideal)
-Bcomp comp_int 0 V = IF(V(INP)-V(INN) > 0, V(VCC), V(VEE))
+Bcomp comp_int 0 V = {(V(VCC)+V(VEE))/2 + (V(VCC)-V(VEE))/2 * tanh(1e4*(V(INP)-V(INN)))}
 
 * Propagation delay model: RC with tau = 260ns
 Rdel comp_int del_out 1k

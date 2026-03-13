@@ -43,6 +43,8 @@
   "prbs_order": 7,
   "n_bits": 100,
   "simulation_engine": "spice",
+  "rx_topology": "ina_bpf_comp",
+  "dcdc_enable": true,
   "noise_enable": false,
   "ina_noise_nV_rtHz": 45.0,
   "shot_noise_enable": true,
