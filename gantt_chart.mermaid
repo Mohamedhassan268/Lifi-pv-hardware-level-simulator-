@@ -1,0 +1,57 @@
+gantt
+    title LiFi-PV Production Transition — 52-Week Roadmap
+    dateFormat YYYY-MM-DD
+    axisFormat %b %Y
+    todayMarker off
+
+    section Phase 1: Architecture & PCB
+    System architecture freeze           :p1a, 2026-07-06, 2w
+    Dual-processor partitioning spec      :p1b, after p1a, 1w
+    TIA redesign (OPA380 + 100kΩ)        :p1c, after p1a, 2w
+    Optical subsystem spec (lens+filter)  :p1d, after p1a, 2w
+    Production component sourcing         :p1e, after p1b, 3w
+    4-layer PCB schematic capture         :p1f, after p1c, 3w
+    Mixed-signal PCB layout               :p1g, after p1f, 3w
+    PCB fabrication + SMT assembly        :p1h, after p1g, 3w
+    ★ GATE 1: Rev A boards received      :milestone, m1, after p1h, 0d
+
+    section Phase 2: Firmware & Network
+    STM32H7 OOK decoder firmware          :p2a, 2026-08-17, 5w
+    Manchester encoding + FEC codec       :p2b, after p2a, 3w
+    ESP32-S3 OTA + dual-partition boot    :p2c, 2026-08-17, 4w
+    TinyML model port to ESP32-S3         :p2d, after p2c, 3w
+    MQTT QoS 1 + flash ring buffer        :p2e, after p2c, 2w
+    ChirpStack LoRaWAN server setup       :p2f, 2026-09-14, 3w
+    SX1302 gateway commissioning          :p2g, after p2f, 2w
+    Node firmware integration (all modules):p2h, after p2b, 3w
+    ★ GATE 2: Firmware feature-complete   :milestone, m2, after p2h, 0d
+
+    section Phase 3: Alpha Validation
+    Rev A board bring-up + smoke test     :p3a, after m1, 2w
+    TIA characterization (BW, noise)      :p3b, after p3a, 2w
+    Hybrid receiver test (30m range)      :p3c, after p3a, 3w
+    MPPT charging validation (BQ25570)    :p3d, after p3a, 2w
+    LoRaWAN capacity stress test (500 sim):p3e, after p2g, 3w
+    Environmental chamber (thermal+humid) :p3f, after p3b, 2w
+    Full system integration bench test    :p3g, after p3c, 2w
+    Rev B PCB design corrections          :p3h, after p3g, 3w
+    ★ GATE 3: Alpha validation passed     :milestone, m3, after p3h, 0d
+
+    section Phase 4: Beta Field Test
+    Rev B PCB fabrication (50-unit batch)  :p4a, after m3, 4w
+    IP67 enclosure manufacturing          :p4b, after m3, 3w
+    20-node field deployment (Cairo)       :p4c, after p4a, 2w
+    Optical alignment + commissioning      :p4d, after p4c, 1w
+    8-week continuous operation test        :p4e, after p4d, 8w
+    BER + channel characterization data    :p4f, after p4d, 6w
+    Publication manuscript drafting         :p4g, after p4f, 4w
+    ★ GATE 4: 99.9% uptime achieved       :milestone, m4, after p4e, 0d
+
+    section Phase 5: Enterprise Deployment
+    Contract manufacturer engagement       :p5a, after m4, 2w
+    500-unit production run                :p5b, after p5a, 6w
+    CE/FCC certification process           :p5c, after m4, 8w
+    Multi-site gateway infrastructure      :p5d, after p5b, 3w
+    3-farm deployment + commissioning      :p5e, after p5d, 4w
+    Open-source release + publication      :p5f, after p4g, 2w
+    ★ GATE 5: Enterprise system live       :milestone, m5, after p5e, 0d
