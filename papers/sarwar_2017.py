@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 from scipy import signal as sig
 
 from papers.ofdm_modem import OFDMModem, solar_panel_channel_response, ber_mqam
+from papers.shared import save_figure, validation_header, validate_metric, print_validation_summary
 
 PARAMS = {
     'led_power_w': 3.0,
@@ -57,9 +58,7 @@ def _plot_fig4_ber(results, output_dir):
     ax.set_xlim([0, results['n_subcarriers']])
     ax.set_ylim([1e-5, 0.1])
     ax.legend(fontsize=11); ax.grid(True, alpha=0.3)
-    path = os.path.join(output_dir, 'fig4_ber_subcarrier.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig4_ber_subcarrier.png')
 
 
 def _plot_fig5_evm(results, output_dir):
@@ -70,9 +69,7 @@ def _plot_fig5_evm(results, output_dir):
     ax.set_ylabel('EVM (%)', fontsize=12)
     ax.set_title('EVM per Subcarrier (Sarwar 2017, Fig. 5)', fontsize=14, fontweight='bold')
     ax.set_xlim([0, results['n_subcarriers']]); ax.grid(True, alpha=0.3)
-    path = os.path.join(output_dir, 'fig5_evm_subcarrier.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig5_evm_subcarrier.png')
 
 
 def _plot_fig6_spectrum(results, output_dir):
@@ -93,9 +90,7 @@ def _plot_fig6_spectrum(results, output_dir):
     ax.set_ylabel('PSD (dB, normalized)', fontsize=12)
     ax.set_title('OFDM Spectrum (Sarwar 2017, Fig. 6)', fontsize=14, fontweight='bold')
     ax.set_xlim([0, 5]); ax.set_ylim([-70, 10]); ax.grid(True, alpha=0.3)
-    path = os.path.join(output_dir, 'fig6_spectrum.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig6_spectrum.png')
 
 
 def _plot_fig7_constellation(results, output_dir):
@@ -111,20 +106,16 @@ def _plot_fig7_constellation(results, output_dir):
                  fontsize=14, fontweight='bold')
     ax.set_xlim([-1.5, 1.5]); ax.set_ylim([-1.5, 1.5])
     ax.grid(True, alpha=0.3); ax.set_aspect('equal')
-    path = os.path.join(output_dir, 'fig7_constellation.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig7_constellation.png')
 
 
 def run_validation(output_dir=None, n_symbols=1000):
-    if output_dir is None:
-        output_dir = os.path.join('workspace', 'validation_sarwar2017')
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("\n" + "=" * 60)
-    print("  SARWAR et al. (2017) - OFDM VALIDATION")
-    print("  ICOCN 2017")
-    print("=" * 60)
+    output_dir = validation_header(
+        'SARWAR et al. (2017) - OFDM VALIDATION',
+        'ICOCN 2017',
+        output_dir=output_dir,
+        default_subdir='validation_sarwar2017',
+    )
 
     modem = OFDMModem(
         nfft=PARAMS['n_fft'], cp_length=PARAMS['cp_len'],
@@ -143,11 +134,10 @@ def run_validation(output_dir=None, n_symbols=1000):
                              channel_H=H, equalization='ZF', seed=42)
 
     data_rate = modem.calculate_data_rate(PARAMS['sample_rate_hz'])
-    print(f"  Data rate: {data_rate:.2f} Mbps (target: {TARGETS['data_rate_mbps']})")
-    print(f"  BER: {results['overall_ber']:.4e} (target: {TARGETS['ber']:.4e})")
-
-    passed = results['overall_ber'] < TARGETS['fec_threshold']
-    print(f"  Status: {'PASS' if passed else 'FAIL'} (below FEC {TARGETS['fec_threshold']:.1e})")
+    validation_results = [
+        validate_metric(data_rate, TARGETS['data_rate_mbps'], 'Data rate', unit='Mbps'),
+        validate_metric(results['overall_ber'], TARGETS['ber'], 'Overall BER'),
+    ]
 
     print("\n  Generating figures...")
     _plot_fig4_ber(results, output_dir)
@@ -155,8 +145,9 @@ def run_validation(output_dir=None, n_symbols=1000):
     _plot_fig6_spectrum(results, output_dir)
     _plot_fig7_constellation(results, output_dir)
 
+    all_pass = print_validation_summary(validation_results)
     print(f"  Output: {output_dir}")
-    return passed
+    return all_pass
 
 
 if __name__ == "__main__":

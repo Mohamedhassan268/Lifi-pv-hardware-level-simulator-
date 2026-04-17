@@ -303,9 +303,13 @@ class ReceiverChain:
             V_current = bpf.process(V_current, t)
             V_bpf_list.append(V_current.copy())
 
-        # Comparator: signal vs Vref
-        V_ref = np.full_like(V_current, self.ina.V_ref)
-        V_comp = self.comparator.process(V_current, V_ref, t)
+        # Comparator: signal vs threshold.
+        # Use signal's mean as threshold (matches AC-coupled comparator with
+        # DC restoration). Using a fixed V_ref fails when the BPF output's
+        # residual DC drifts off V_ref by even a few mV — the small AC swing
+        # then never crosses back above the fixed reference.
+        V_threshold = np.full_like(V_current, np.mean(V_current))
+        V_comp = self.comparator.process(V_current, V_threshold, t)
 
         return ChainWaveforms(
             t=t,

@@ -96,10 +96,10 @@ class TestEngineAssignment:
         cfg = SystemConfig.from_preset('kadirvelu2021')
         assert cfg.simulation_engine == 'spice'
 
-    def test_gonzalez_uses_spice(self):
+    def test_gonzalez_uses_python(self):
         from cosim.system_config import SystemConfig
         cfg = SystemConfig.from_preset('gonzalez2024')
-        assert cfg.simulation_engine == 'spice'
+        assert cfg.simulation_engine == 'python'
 
     def test_sarwar_uses_python(self):
         from cosim.system_config import SystemConfig
@@ -195,7 +195,7 @@ class TestChannelGain:
     def test_kadirvelu_short_range(self):
         """Kadirvelu 2021: 32.5 cm, should have high channel gain."""
         from cosim.python_engine import OpticalChannel
-        ch = OpticalChannel(distance_m=0.325, beam_half_angle_deg=60,
+        ch = OpticalChannel(distance_m=0.325, led_half_angle_deg=60,
                             rx_area_cm2=9.0)
         g = ch.channel_gain()
         assert g > 1e-4  # short range: decent gain
@@ -204,7 +204,7 @@ class TestChannelGain:
     def test_sarwar_medium_range(self):
         """Sarwar 2017: 2m distance, lower gain."""
         from cosim.python_engine import OpticalChannel
-        ch = OpticalChannel(distance_m=2.0, beam_half_angle_deg=60,
+        ch = OpticalChannel(distance_m=2.0, led_half_angle_deg=60,
                             rx_area_cm2=7.5)
         g = ch.channel_gain()
         assert g > 1e-6
@@ -213,7 +213,7 @@ class TestChannelGain:
     def test_xu_long_range(self):
         """Xu 2024: 5m, sunlight, large PV array."""
         from cosim.python_engine import OpticalChannel
-        ch = OpticalChannel(distance_m=5.0, beam_half_angle_deg=90,
+        ch = OpticalChannel(distance_m=5.0, led_half_angle_deg=90,
                             rx_area_cm2=16.0)
         g = ch.channel_gain()
         assert g > 1e-6
@@ -222,10 +222,12 @@ class TestChannelGain:
     def test_humidity_attenuation(self):
         """Correa 2025: humidity should reduce channel gain."""
         from cosim.python_engine import OpticalChannel
-        ch_dry = OpticalChannel(distance_m=0.85, beam_half_angle_deg=60,
-                                rx_area_cm2=66.0, humidity=0.0)
-        ch_wet = OpticalChannel(distance_m=0.85, beam_half_angle_deg=60,
-                                rx_area_cm2=66.0, humidity=0.8)
+        ch_dry = OpticalChannel(distance_m=0.85, led_half_angle_deg=60,
+                                rx_area_cm2=66.0, humidity_rh=0.0,
+                                beer_lambert_enabled=True)
+        ch_wet = OpticalChannel(distance_m=0.85, led_half_angle_deg=60,
+                                rx_area_cm2=66.0, humidity_rh=0.8,
+                                beer_lambert_enabled=True)
         assert ch_wet.channel_gain() < ch_dry.channel_gain()
 
 
@@ -288,7 +290,7 @@ class TestNoiseModel:
     def test_noise_samples_length(self):
         from cosim.python_engine import NoiseModel
         nm = NoiseModel()
-        noise = nm.generate_noise(1000, 1e-6, 5e3)
+        noise = nm.generate_time_domain(1000, 1e-6, 5e3)
         assert len(noise) == 1000
 
 
@@ -372,8 +374,7 @@ class TestDualEngine:
 
         cfg = SystemConfig.from_preset('xu2024')
         # Use fewer bits for speed
-        import dataclasses
-        cfg = dataclasses.replace(cfg, n_bits=10)
+        cfg = cfg.replace(n_bits=10)
 
         for sub in ('pwl', 'netlists', 'raw'):
             (tmp_path / sub).mkdir()
@@ -395,8 +396,7 @@ class TestDualEngine:
         from cosim.system_config import SystemConfig
 
         cfg = SystemConfig.from_preset('kadirvelu2021')
-        import dataclasses
-        cfg = dataclasses.replace(cfg, n_bits=10)
+        cfg = cfg.replace(n_bits=10)
 
         for sub in ('pwl', 'netlists', 'raw'):
             (tmp_path / sub).mkdir()

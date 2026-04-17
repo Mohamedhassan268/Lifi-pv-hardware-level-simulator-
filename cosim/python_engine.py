@@ -211,14 +211,14 @@ def run_python_simulation(config) -> Dict:
 
         V_rx = V_amp
 
-    elif cfg.rx_chain_enable:
-        # Phase 2: Full receiver chain (R_sense → INA → BPF → Comparator)
+    elif topology == 'ina_bpf_comp' or cfg.rx_chain_enable:
+        # Full receiver chain (R_sense → INA → BPF → Comparator)
         rx_chain = ReceiverChain.from_config(cfg)
         chain_waveforms = rx_chain.process(I_ph_noisy, t)
         V_rx = chain_waveforms.V_comp
 
     else:
-        # Default (ina_bpf_comp without Phase 2): Simple TIA + signal conditioning
+        # Fallback: Simple TIA + signal conditioning
         V_tia = rx.apply_tia(I_ph_noisy, t, R_tia=50e3, f_3db=min(bandwidth * 5, fs / 3))
 
         # Apply notch filter if configured
@@ -233,26 +233,37 @@ def run_python_simulation(config) -> Dict:
 
     # ========== Demodulation ==========
     if mod_scheme == 'OFDM':
-        # OFDM uses digital-domain coherent demodulation
+        # OFDM uses digital-domain coherent demodulation.
+        # The OFDM TX waveform is dimensionless (normalized); we apply the
+        # physical SNR from the link budget by scaling noise to match the
+        # signal's electrical SNR at the receiver.
         n_data = cfg.ofdm_nfft // 2 - 1
         n_sc = min(cfg.ofdm_n_subcarriers, n_data)
 
         ofdm_tx_signal = generate_ofdm_digital(
             bits_tx, cfg.ofdm_qam_order, cfg.ofdm_nfft, cfg.ofdm_cp_len, n_sc)
 
-        G = channel.channel_gain() * rx.R
-        ofdm_rx_signal = ofdm_tx_signal * G
         if cfg.noise_enable:
-            sigma = noise_model.total_noise_std(np.mean(I_ph), bandwidth)
-            ofdm_rx_signal += np.random.normal(0, sigma * TIA_GAIN_OHM, len(ofdm_rx_signal))
-
-        # Zero-forcing equalization
-        if G > 0:
-            ofdm_eq = ofdm_rx_signal / G
+            # Physical SNR: (signal current)^2 / (noise current std)^2
+            # Signal current ~ R * mean(P_rx) (photocurrent swing)
+            I_signal = rx.R * np.mean(P_rx)
+            sigma_I = noise_model.total_noise_std(np.mean(I_ph), bandwidth)
+            if sigma_I > 0 and I_signal > 0:
+                snr_linear = (I_signal / sigma_I) ** 2
+            else:
+                snr_linear = 1e12
+            # Scale noise to match SNR relative to OFDM signal power
+            signal_power = np.var(ofdm_tx_signal)
+            noise_power = signal_power / max(snr_linear, 1e-12)
+            noise_std = np.sqrt(noise_power)
+            ofdm_rx_signal = ofdm_tx_signal + np.random.normal(
+                0, noise_std, len(ofdm_tx_signal))
         else:
-            ofdm_eq = ofdm_rx_signal
+            ofdm_rx_signal = ofdm_tx_signal
 
-        bits_rx = demodulate('OFDM', ofdm_eq, t, n_bits, config=cfg, bits_tx=bits_tx)
+        # Channel gain is absorbed (ZF equalization): pass through directly.
+        bits_rx = demodulate('OFDM', ofdm_rx_signal, t, n_bits,
+                             config=cfg, bits_tx=bits_tx)
     else:
         bits_rx = demodulate(mod_scheme, V_rx, t, n_bits, config=cfg)
 

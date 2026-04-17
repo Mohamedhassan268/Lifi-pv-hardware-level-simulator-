@@ -22,18 +22,23 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
-      - name: Install dependencies
+      - name: Install core dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install numpy scipy matplotlib schemdraw
+          pip install numpy scipy matplotlib schemdraw requests PyYAML
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Run pytest suite
+        run: pytest tests/test_suite.py -q
 
       - name: Run module self-tests
-        working-directory: .
         run: python cli.py test
 
       - name: Run paper validation (no SPICE required)
-        working-directory: .
         run: python cli.py validate
 
   lint:
@@ -45,13 +50,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
 
       - name: Install dependencies
-        run: pip install numpy scipy matplotlib schemdraw
+        run: pip install numpy scipy matplotlib schemdraw requests PyYAML
 
-      - name: Check imports
-        working-directory: .
+      - name: Smoke-test imports
         run: |
           python -c "from cosim.spice_finder import find_ngspice, find_ltspice, spice_available; print('spice_finder OK')"
-          python -c "from cosim.system_config import SystemConfig; print('SystemConfig OK')"
+          python -c "from cosim.system_config import SystemConfig, TXConfig, ChannelConfig, RXConfig, NoiseConfig; print('SystemConfig decomposition OK')"
           python -c "from components import COMPONENT_REGISTRY; print(f'{len(COMPONENT_REGISTRY)} components registered')"
+          python -c "from papers.shared import save_figure, validation_header, validate_metric; print('papers.shared OK')"
+          python -c "from papers import kadirvelu_2021, sarwar_2017, gonzalez_2024, correa_2025, xu_2024, oliveira_2024; print('all paper modules OK')"

@@ -30,6 +30,7 @@ from papers.ofdm_modem import (
     OFDMModem, allocate_bits, ber_mqam,
     gross_data_rate, net_data_rate, BIT_ALLOCATION_TABLE,
 )
+from papers.shared import save_figure, validation_header, validate_metric, print_validation_summary
 
 # =============================================================================
 # PAPER PARAMETERS (LOCKED)
@@ -189,11 +190,7 @@ def _plot_fig3c(results, snr_db, modem, output_dir):
                      bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
 
     fig.suptitle('OFDM Subcarrier Performance (Fig. 3c)', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig3c_subcarrier.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig3c_subcarrier.png', dpi=200)
 
 
 # =============================================================================
@@ -247,11 +244,7 @@ def _plot_fig3d(results, output_dir, snr_db_val=25.0, n_symbols=2000):
         ax_noisy.set_xlabel('In-phase', fontweight='bold')
 
     fig.suptitle('QAM Constellation Diagrams (Fig. 3d)', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig3d_constellation.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig3d_constellation.png', dpi=200)
 
 
 # =============================================================================
@@ -315,11 +308,7 @@ def _plot_fig4c(output_dir, duration_s=4.0, samples_per_second=100):
     axes[-1].set_xlabel('Time (s)', fontweight='bold')
     fig.suptitle('Quadrant Beam Tracking: SNR and BER vs Time (Fig. 4c)',
                  fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig4c_beam_tracking.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig4c_beam_tracking.png', dpi=200)
 
 
 # =============================================================================
@@ -390,11 +379,7 @@ def _plot_fig5_energy(output_dir):
 
     fig.suptitle('Energy Harvesting Performance (Table 1 / Fig. 5)',
                  fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig5_energy_harvesting.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig5_energy_harvesting.png', dpi=200)
 
 
 # =============================================================================
@@ -443,11 +428,7 @@ def _plot_tradeoff(output_dir, illuminance_lux=55900):
 
     fig.suptitle(f'Communication vs Harvesting Tradeoff @ {illuminance_lux} lux',
                  fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig6_tradeoff.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig6_tradeoff.png', dpi=200)
 
 
 # =============================================================================
@@ -487,11 +468,7 @@ def _plot_comparison_table(output_dir):
 
     ax.set_title('Oliveira 2024: Operating Mode Comparison\n(@ Direct Sunlight, 55900 lux)',
                  fontsize=14, fontweight='bold', pad=20)
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig7_comparison.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig7_comparison.png', dpi=200)
 
 
 # =============================================================================
@@ -527,11 +504,7 @@ def _plot_pd_array(output_dir):
 
     fig.suptitle('3x3 PD Array Quadrant Configurations (Fig. 4d)',
                  fontsize=14, fontweight='bold')
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-    path = os.path.join(output_dir, 'fig8_pd_array.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig8_pd_array.png', dpi=200)
 
 
 # =============================================================================
@@ -590,11 +563,7 @@ def _plot_supercap(output_dir, illuminance_lux=55900, duration_min=60):
     ax.grid(True, which='both', alpha=0.3)
 
     fig.suptitle('Supercapacitor Charging Performance', fontsize=14, fontweight='bold')
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig9_supercap.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig9_supercap.png', dpi=200)
 
 
 # =============================================================================
@@ -631,11 +600,7 @@ def _plot_ber_distance(output_dir):
     ax.legend(loc='upper left', fontsize=10)
     ax.grid(True, which='both', alpha=0.3)
 
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig10_ber_distance.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig10_ber_distance.png', dpi=200)
 
 
 # =============================================================================
@@ -664,10 +629,7 @@ def _plot_bit_allocation(modem, snr_db, output_dir):
     ax.set_xlim([0, n_sc])
     ax.set_yticks([])
 
-    path = os.path.join(output_dir, 'bit_allocation_map.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'bit_allocation_map.png')
 
 
 # =============================================================================
@@ -676,14 +638,12 @@ def _plot_bit_allocation(modem, snr_db, output_dir):
 
 def run_validation(output_dir=None, n_symbols=200):
     """Run Oliveira 2024 full validation suite."""
-    if output_dir is None:
-        output_dir = os.path.join('workspace', 'validation_oliveira2024')
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("\n" + "=" * 60)
-    print("  OLIVEIRA et al. (2024) - MIMO SLIPT VALIDATION")
-    print("  Light: Science & Applications")
-    print("=" * 60)
+    output_dir = validation_header(
+        'OLIVEIRA et al. (2024) - MIMO SLIPT VALIDATION',
+        'Light: Science & Applications',
+        output_dir=output_dir,
+        default_subdir='validation_oliveira2024',
+    )
 
     # 1. SNR profile
     np.random.seed(42)

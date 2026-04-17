@@ -169,10 +169,8 @@ def _plot_fig6(output_dir):
     ax2.set_title('Voltage Transfer Function (Fig. 6b)', fontweight='bold')
     ax2.grid(True, alpha=0.3); ax2.set_xlim([1,1e6]); ax2.set_ylim([-50,70])
 
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig6_transfer_functions.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    from papers.shared import save_figure
+    save_figure(output_dir, 'fig6_transfer_functions.png')
 
 
 def _plot_fig13(output_dir):
@@ -189,10 +187,8 @@ def _plot_fig13(output_dir):
     ax.set_title('System Frequency Response (Fig. 13)', fontweight='bold')
     ax.grid(True, alpha=0.3); ax.set_xlim([1,1e6]); ax.set_ylim([-60,10])
     ax.legend()
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig13_frequency_response.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    from papers.shared import save_figure
+    save_figure(output_dir, 'fig13_frequency_response.png')
 
 
 def _plot_fig15(output_dir):
@@ -208,10 +204,8 @@ def _plot_fig15(output_dir):
     ax.set_xlabel('Duty Cycle (%)'); ax.set_ylabel('V_out (V)')
     ax.set_title('DC-DC Output vs Duty Cycle (Fig. 15)', fontweight='bold')
     ax.grid(True, alpha=0.3); ax.legend(); ax.set_xlim([0,50]); ax.set_ylim([0,3])
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig15_vout_vs_duty.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    from papers.shared import save_figure
+    save_figure(output_dir, 'fig15_vout_vs_duty.png')
 
 
 def _plot_fig17(output_dir):
@@ -229,10 +223,8 @@ def _plot_fig17(output_dir):
         ax.set_xlim([0,105]); ax.set_ylim([1e-6, 1])
     ax2.axhline(TARGETS['BER'], color='green', ls=':', lw=2, label=f'Target: {TARGETS["BER"]:.2e}')
     ax2.legend()
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig17_ber_vs_modulation.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    from papers.shared import save_figure
+    save_figure(output_dir, 'fig17_ber_vs_modulation.png')
 
 
 def _plot_fig19(output_dir):
@@ -257,10 +249,8 @@ def _plot_fig19(output_dir):
     ax.set_title('Trade-off: Harvested Power vs Data Rate (Fig. 19)', fontweight='bold')
     ax.grid(True, which='both', alpha=0.3); ax.legend(fontsize=11)
     ax.set_xlim([1,50]); ax.set_ylim([0,250])
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig19_power_vs_bitrate.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    from papers.shared import save_figure
+    save_figure(output_dir, 'fig19_power_vs_bitrate.png')
 
 
 # =============================================================================
@@ -268,14 +258,14 @@ def _plot_fig19(output_dir):
 # =============================================================================
 
 def run_validation(output_dir=None):
-    if output_dir is None:
-        output_dir = os.path.join('workspace', 'validation_kadirvelu2021')
-    os.makedirs(output_dir, exist_ok=True)
+    from papers.shared import validation_header, validate_metric, print_validation_summary
 
-    print("\n" + "=" * 65)
-    print("  KADIRVELU et al. (2021) - SLIPT VALIDATION")
-    print("  IEEE Trans. Green Communications and Networking")
-    print("=" * 65)
+    output_dir = validation_header(
+        'KADIRVELU et al. (2021) - SLIPT VALIDATION',
+        'IEEE Trans. Green Communications and Networking',
+        output_dir=output_dir,
+        default_subdir='validation_kadirvelu2021',
+    )
 
     # Optical channel
     G_op = optical_channel_gain()
@@ -284,16 +274,15 @@ def run_validation(output_dir=None):
     print(f"  Received power: {P_r*1e6:.1f} uW")
 
     # Energy harvesting
+    results = []
     P_harv = PARAMS['P_mpp_uW'] * PARAMS['eta_50kHz']
-    error_pct = abs(P_harv - TARGETS['P_harvested_uW']) / TARGETS['P_harvested_uW'] * 100
-    print(f"\n  Harvested power: {P_harv:.1f} uW (target: {TARGETS['P_harvested_uW']})")
-    print(f"  Error: {error_pct:.1f}%  {'PASS' if error_pct < 10 else 'FAIL'}")
+    results.append(validate_metric(P_harv, TARGETS['P_harvested_uW'],
+                                   'Harvested power', threshold_pct=10, unit='uW'))
 
     # BER
     ber_sim = compute_BER(0.50, 200, 400)
-    ber_err = abs(ber_sim - TARGETS['BER']) / TARGETS['BER'] * 100
-    print(f"\n  BER @ m=50%, f_sw=200kHz: {ber_sim:.3e} (target: {TARGETS['BER']:.3e})")
-    print(f"  Error: {ber_err:.1f}%  {'PASS' if ber_err < 20 else 'FAIL'}")
+    results.append(validate_metric(ber_sim, TARGETS['BER'],
+                                   'BER @ m=50%, f_sw=200kHz', threshold_pct=20))
 
     # Generate figures
     print("\n  Generating figures...")
@@ -303,8 +292,7 @@ def run_validation(output_dir=None):
     _plot_fig17(output_dir)
     _plot_fig19(output_dir)
 
-    all_pass = error_pct < 10 and ber_err < 20
-    print(f"\n  Overall: {'PASS' if all_pass else 'REVIEW'}")
+    all_pass = print_validation_summary(results)
     print(f"  Output: {output_dir}")
     return all_pass
 

@@ -136,10 +136,10 @@ class TestSystemConfig:
         cfg = SystemConfig()
         assert cfg.noise_enable is False
 
-    def test_dataclasses_replace_distance_sweep(self):
+    def test_replace_distance_sweep(self):
         from cosim.system_config import SystemConfig
         cfg = SystemConfig()
-        cfg2 = dataclasses.replace(cfg, distance_m=1.0)
+        cfg2 = cfg.replace(distance_m=1.0)
         assert cfg2.distance_m == 1.0
         assert cfg.distance_m != 1.0  # original unchanged
 

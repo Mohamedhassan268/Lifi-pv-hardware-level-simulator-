@@ -138,11 +138,24 @@ def modulate(scheme: str, bits: np.ndarray, t: np.ndarray,
     """
     scheme = scheme.upper().replace('-', '_')
 
-    # Extract params from config or kwargs
-    dc_bias_mA = kwargs.get('dc_bias_mA', _cfg_val(config, 'bias_current_A', 0.35) * 1000)
+    # Determine optical power base: prefer led_radiated_power_mW (direct optical
+    # spec from datasheet/paper), fall back to I_dc * led_gled (derived optical
+    # power from drive current + LED W/A coupling).
     mod_depth = kwargs.get('mod_depth', _cfg_val(config, 'modulation_depth', 0.33))
-    led_eff = kwargs.get('led_efficiency', _cfg_val(config, 'led_gled', 0.88))
-    I_dc = dc_bias_mA  # mA
+    P_led_mW = kwargs.get('P_led_mW', _cfg_val(config, 'led_radiated_power_mW', 0.0))
+
+    if P_led_mW and P_led_mW > 0:
+        # Route 1: radiated-power-first. P_led is the DC optical power at bias.
+        # _modulate_* expect a dc_current (mA) and W/A efficiency whose product
+        # equals P_led. Feed P_led_mW as the "current" and 1.0 as "efficiency".
+        I_dc = P_led_mW
+        led_eff = 1.0
+    else:
+        # Route 2: derive from bias current and LED coupling efficiency.
+        dc_bias_mA = kwargs.get('dc_bias_mA',
+                                _cfg_val(config, 'bias_current_A', 0.35) * 1000)
+        I_dc = dc_bias_mA
+        led_eff = kwargs.get('led_efficiency', _cfg_val(config, 'led_gled', 0.88))
 
     if scheme == 'OOK':
         return _modulate_ook(bits, t, I_dc, mod_depth, led_eff)
@@ -161,7 +174,7 @@ def modulate(scheme: str, bits: np.ndarray, t: np.ndarray,
     elif scheme == 'PWM_ASK':
         pwm_freq = kwargs.get('pwm_freq', _cfg_val(config, 'pwm_freq_hz', 10.0))
         carrier_freq = kwargs.get('carrier_freq', _cfg_val(config, 'carrier_freq_hz', 10000.0))
-        return _modulate_pwm_ask(t, I_dc, mod_depth, led_eff, pwm_freq, carrier_freq)
+        return _modulate_pwm_ask(bits, t, I_dc, mod_depth, led_eff, pwm_freq, carrier_freq)
     else:
         raise ValueError(f"Unsupported modulation scheme: {scheme}")
 
@@ -266,16 +279,28 @@ def _modulate_bfsk(bits, t, I_dc_mA, mod_depth, led_eff, f0, f1,
     return lc_state * P_tx_dc
 
 
-def _modulate_pwm_ask(t, I_dc_mA, mod_depth, led_eff,
-                      pwm_freq, carrier_freq, duty=0.5):
-    """PWM-ASK modulation (Correa 2025)."""
-    phase_pwm = (t * pwm_freq) % 1.0
-    pwm = (phase_pwm < duty).astype(float)
+def _modulate_pwm_ask(bits, t, I_dc_mA, mod_depth, led_eff,
+                      pwm_freq, carrier_freq):
+    """PWM-ASK modulation (Correa 2025).
+
+    Correa's greenhouse scheme: the LED brightness is PWM'd at pwm_freq for
+    agricultural dimming, and data bits are ASK-modulated on a high-freq
+    carrier within the PWM-ON windows. The simulator focuses on the data
+    channel: each bit gates the carrier (bit=1 -> carrier present,
+    bit=0 -> suppressed). The slow PWM envelope is effectively "ON" during
+    transmission; its effect on BER is captured by pwm duty in the
+    theoretical BER, not by skipping bits here.
+    """
+    n_bits = len(bits)
+    T = t[-1] - t[0] if len(t) > 1 else 1.0
+    bit_duration = T / n_bits
+    bit_idx = np.clip((t / bit_duration).astype(int), 0, n_bits - 1)
+    data_envelope = bits[bit_idx].astype(float)
 
     phase_carrier = (t * carrier_freq) % 1.0
     carrier = (phase_carrier < 0.5).astype(float)
 
-    signal_d = pwm * carrier
+    signal_d = data_envelope * carrier
     level_hi = I_dc_mA * (1 + mod_depth)
     level_lo = I_dc_mA * (1 - mod_depth)
     I_tx = level_lo + (level_hi - level_lo) * signal_d
@@ -362,8 +387,10 @@ def demodulate(scheme: str, signal_in: np.ndarray, t: np.ndarray,
     sps = len(t) // n_bits
     data_rate = _cfg_val(config, 'data_rate_bps', n_bits / t[-1])
 
-    if scheme in ('OOK', 'PWM_ASK'):
+    if scheme == 'OOK':
         return _demodulate_ook(signal_in, n_bits, sps, fs, data_rate)
+    elif scheme == 'PWM_ASK':
+        return _demodulate_pwm_ask(signal_in, n_bits, sps)
     elif scheme == 'OOK_MANCHESTER':
         return _demodulate_manchester(signal_in, n_bits, sps, fs, data_rate)
     elif scheme == 'OFDM':
@@ -383,26 +410,38 @@ def demodulate(scheme: str, signal_in: np.ndarray, t: np.ndarray,
 
 
 def _demodulate_ook(signal_in, n_bits, sps, fs, data_rate):
-    """OOK demodulation: HPF -> LPF -> sample -> threshold."""
+    """OOK demodulation: HPF -> LPF -> sample -> threshold.
+
+    Skips the HPF/LPF stages when the input is already a binary comparator
+    output (only two unique levels), since filtfilt introduces edge
+    artifacts that corrupt bits near the stream boundaries.
+    """
     from scipy import signal as sp_signal
 
-    # HPF to remove DC
-    hpf_cutoff = max(data_rate * 0.01, 10)
-    wn_hp = hpf_cutoff / (fs / 2)
-    if 0 < wn_hp < 1:
-        b, a = sp_signal.butter(4, wn_hp, btype='high')
-        V_hpf = sp_signal.filtfilt(b, a, signal_in)
-    else:
-        V_hpf = signal_in
+    # Detect binary comparator output: already-digitized, no need to filter.
+    unique_vals = np.unique(signal_in)
+    already_binary = len(unique_vals) <= 2
 
-    # LPF for noise reduction
-    lpf_cutoff = min(data_rate * 2, fs * 0.45)
-    wn_lp = lpf_cutoff / (fs / 2)
-    if 0 < wn_lp < 1:
-        b, a = sp_signal.butter(4, wn_lp, btype='low')
-        V_lpf = sp_signal.filtfilt(b, a, V_hpf)
+    if already_binary:
+        V_lpf = signal_in
     else:
-        V_lpf = V_hpf
+        # HPF to remove DC
+        hpf_cutoff = max(data_rate * 0.01, 10)
+        wn_hp = hpf_cutoff / (fs / 2)
+        if 0 < wn_hp < 1:
+            b, a = sp_signal.butter(4, wn_hp, btype='high')
+            V_hpf = sp_signal.filtfilt(b, a, signal_in)
+        else:
+            V_hpf = signal_in
+
+        # LPF for noise reduction
+        lpf_cutoff = min(data_rate * 2, fs * 0.45)
+        wn_lp = lpf_cutoff / (fs / 2)
+        if 0 < wn_lp < 1:
+            b, a = sp_signal.butter(4, wn_lp, btype='low')
+            V_lpf = sp_signal.filtfilt(b, a, V_hpf)
+        else:
+            V_lpf = V_hpf
 
     # Sample at bit centers
     indices = np.arange(n_bits) * sps + sps // 2
@@ -410,6 +449,23 @@ def _demodulate_ook(signal_in, n_bits, sps, fs, data_rate):
     samples = V_lpf[indices]
     threshold = (np.max(samples) + np.min(samples)) / 2
     return (samples > threshold).astype(int)
+
+
+def _demodulate_pwm_ask(signal_in, n_bits, sps):
+    """PWM-ASK demodulation via envelope (per-bit mean) + threshold.
+
+    The PWM+carrier product makes point-sampling unreliable, so we average
+    the signal over each bit interval (simple envelope) then threshold.
+    """
+    indices = np.arange(n_bits + 1) * sps
+    indices = np.clip(indices.astype(int), 0, len(signal_in))
+    envelopes = np.array([
+        np.mean(signal_in[indices[i]:indices[i+1]])
+        if indices[i+1] > indices[i] else 0.0
+        for i in range(n_bits)
+    ])
+    threshold = (envelopes.max() + envelopes.min()) / 2
+    return (envelopes > threshold).astype(int)
 
 
 def _demodulate_manchester(signal_in, n_bits, sps, fs, data_rate):

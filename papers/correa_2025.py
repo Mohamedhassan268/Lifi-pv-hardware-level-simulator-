@@ -19,6 +19,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy.special import erfc
 
+from papers.shared import save_figure, validation_header, validate_metric, print_validation_summary
+
 Q_ELECTRON = 1.602e-19
 K_BOLTZMANN = 1.38e-23
 
@@ -198,9 +200,7 @@ def generate_fig6(output_dir):
     plt.xlim(40, 140); plt.ylim(-5, 20)
     plt.grid(True, alpha=0.3)
     plt.legend(loc='upper right', fontsize=11, title='Humidity Level')
-    path = os.path.join(output_dir, 'fig6_power_vs_distance.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig6_power_vs_distance.png', dpi=200)
 
 
 def generate_fig7(output_dir):
@@ -216,9 +216,7 @@ def generate_fig7(output_dir):
     plt.xlim(40, 140); plt.ylim(1e-3, 1)
     plt.grid(True, which='both', alpha=0.3)
     plt.legend(loc='lower right', fontsize=11, title='Humidity Level')
-    path = os.path.join(output_dir, 'fig7_ber_vs_distance.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig7_ber_vs_distance.png', dpi=200)
 
 
 def validate_bandwidth(output_dir):
@@ -239,30 +237,28 @@ def validate_bandwidth(output_dir):
     plt.legend(loc='lower left')
     plt.grid(True, which='both', alpha=0.3)
     plt.xlim(100, 100000); plt.ylim(-25, 5)
-    path = os.path.join(output_dir, 'frequency_response.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'frequency_response.png')
     return f_3dB
 
 
 def run_validation(output_dir=None):
-    if output_dir is None:
-        output_dir = os.path.join('workspace', 'validation_correa2025')
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("\n" + "=" * 65)
-    print("  CORREA MORALES et al. (2025) - GREENHOUSE VLC VALIDATION")
-    print("  Scientific Reports, 2025")
-    print("=" * 65)
+    output_dir = validation_header(
+        'CORREA MORALES et al. (2025) - GREENHOUSE VLC VALIDATION',
+        'Scientific Reports, 2025',
+        output_dir=output_dir,
+        default_subdir='validation_correa2025',
+    )
 
     generate_fig6(output_dir)
     generate_fig7(output_dir)
     f_bw = validate_bandwidth(output_dir)
 
-    print(f"\n  Receiver BW: {f_bw/1000:.1f} kHz (target: 14 kHz)")
-    print(f"  Simulated BER range: ~0.01 to ~0.2")
+    results = [
+        validate_metric(f_bw, 14000, 'Receiver bandwidth', unit='Hz'),
+    ]
+    all_pass = print_validation_summary(results)
     print(f"  Output: {output_dir}")
-    return True
+    return all_pass
 
 
 if __name__ == "__main__":

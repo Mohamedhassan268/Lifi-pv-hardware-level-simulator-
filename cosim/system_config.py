@@ -5,6 +5,19 @@ SystemConfig - Paper-agnostic system configuration dataclass.
 Holds all parameters needed to define a TX->Channel->RX simulation:
 component selections, channel geometry, filter settings, and simulation controls.
 
+Organized into domain sub-configs for clarity:
+    TXConfig       — LED, driver, bias, modulation depth, lens
+    ChannelConfig  — Distance, geometry, FOV, Beer-Lambert, multipath
+    RXConfig       — PV cell, amplifier, BPF, comparator, DC-DC
+    NoiseConfig    — 6-source noise enable/disable + parameters
+    SimConfig      — Timing, modulation, engine, RNG
+    ModulationConfig — Scheme-specific params (OFDM, BFSK, PWM-ASK)
+    ValidationConfig — Paper target values + metadata
+
+SystemConfig composes all sub-configs and exposes every field as a flat
+attribute (cfg.distance_m, cfg.sc_responsivity, etc.) for full backward
+compatibility.  JSON serialization is unchanged — flat dict, same keys.
+
 Usage:
     from cosim.system_config import SystemConfig
 
@@ -15,7 +28,7 @@ Usage:
 """
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from pathlib import Path
 from typing import Optional
 
@@ -23,11 +36,13 @@ from typing import Optional
 PRESETS_DIR = Path(__file__).parent.parent / 'presets'
 
 
-@dataclass
-class SystemConfig:
-    """Complete system configuration for a LiFi-PV simulation."""
+# =============================================================================
+# SUB-CONFIG DATACLASSES
+# =============================================================================
 
-    # -- Transmitter -----------------------------------------------------------
+@dataclass
+class TXConfig:
+    """Transmitter parameters: LED, driver, bias, lens."""
     led_part: str = 'LXM5-PD01'
     driver_part: str = 'ADA4891'
     bias_current_A: float = 0.350
@@ -38,19 +53,33 @@ class SystemConfig:
     led_gled: float = 0.88
     lens_transmittance: float = 0.85
 
-    # -- Channel ---------------------------------------------------------------
+    # Phase 2: LED TX model
+    led_bandwidth_limit_enable: bool = False
+
+
+@dataclass
+class ChannelConfig:
+    """Optical channel parameters: geometry, FOV, Beer-Lambert, multipath."""
     distance_m: float = 0.325
     tx_angle_deg: float = 0.0
     rx_tilt_deg: float = 0.0
-    fov_half_angle_deg: float = 90.0      # Receiver FOV half-angle (90 = hemispherical)
-    beer_lambert_enabled: bool = False     # Enable atmospheric attenuation
-    n_reflections: int = 0                 # Number of wall-bounce reflections (0 = LOS only)
-    room_length_m: float = 5.0            # Room dimensions for multipath
+    fov_half_angle_deg: float = 90.0
+    beer_lambert_enabled: bool = False
+    n_reflections: int = 0
+    room_length_m: float = 5.0
     room_width_m: float = 5.0
     room_height_m: float = 3.0
-    wall_reflectivity: float = 0.7        # Diffuse wall reflectance (0-1)
+    wall_reflectivity: float = 0.7
 
-    # -- Receiver --------------------------------------------------------------
+    # Environment
+    humidity_rh: Optional[float] = None
+    temperature_K: float = 300.0
+
+
+@dataclass
+class RXConfig:
+    """Receiver parameters: PV cell, amplifiers, BPF, comparator, DC-DC."""
+    # PV cell
     pv_part: str = 'KXOB25-04X3F'
     sc_area_cm2: float = 9.0
     sc_responsivity: float = 0.457
@@ -61,22 +90,27 @@ class SystemConfig:
     sc_impp_uA: float = 470.0
     sc_pmpp_uW: float = 347.0
 
+    # Current sense
     r_sense_ohm: float = 1.0
+
+    # Instrumentation amplifier
     ina_part: str = 'INA322'
     ina_gain_dB: float = 40.0
     ina_gbw_kHz: float = 700.0
 
+    # Comparator
     comparator_part: str = 'TLV7011'
 
+    # Band-pass filter
     bpf_stages: int = 2
     bpf_f_low_Hz: float = 700.0
     bpf_f_high_Hz: float = 10000.0
     bpf_rhp: float = 100e3
-    bpf_chp_pF: float = 470000.0     # 470 nF (in pF)
+    bpf_chp_pF: float = 470000.0
     bpf_rlp: float = 10e3
-    bpf_clf_nF: float = 1.5           # 1.5 nF
+    bpf_clf_nF: float = 1.5
 
-    # -- DC-DC Converter -------------------------------------------------------
+    # DC-DC converter
     dcdc_fsw_kHz: float = 50.0
     dcdc_l_uH: float = 22.0
     dcdc_cp_uF: float = 10.0
@@ -84,104 +118,150 @@ class SystemConfig:
     r_load_ohm: float = 180000.0
     vcc_volts: float = 3.3
 
-    # -- Simulation Controls ---------------------------------------------------
-    t_stop_s: float = 1e-3
-    data_rate_bps: float = 5000.0
-    modulation: str = 'OOK'             # OOK, OOK_Manchester, OFDM, BFSK, PWM_ASK
-    prbs_order: int = 7
-    n_bits: int = 100
-    simulation_engine: str = 'spice'    # 'spice' or 'python'
-    random_seed: Optional[int] = None    # RNG seed for reproducibility (None = random)
+    # Multi-cell / reconfigurable (Xu 2024)
+    n_cells_series: int = 1
+    n_cells_parallel: int = 1
 
-    # -- Noise Configuration ---------------------------------------------------
+    # Receiver chain extensions (González 2024)
+    amp_gain_linear: float = 1.0
+    notch_freq_hz: Optional[float] = None
+    notch_Q: float = 30.0
+
+    # Architecture (Phase 4)
+    rx_topology: str = 'auto'      # 'ina_bpf_comp' | 'amp_slicer' | 'direct' | 'auto'
+    dcdc_enable: Optional[bool] = None  # None = auto-detect from dcdc_fsw_kHz > 0
+
+    # Phase 2: Enhanced Python Engine
+    pv_ode_enable: bool = False
+    pv_dark_current_A: float = 1e-10
+    pv_ideality_factor: float = 1.5
+    pv_vbi_V: float = 1.1
+    pv_series_resistance_ohm: float = 2.5
+
+    dcdc_rds_on_mohm: float = 52.0
+    dcdc_diode_vf_V: float = 0.3
+    dcdc_inductor_dcr_ohm: float = 0.5
+
+    rx_chain_enable: bool = False
+    comparator_prop_delay_ns: float = 260.0
+
+
+@dataclass
+class NoiseConfig:
+    """Noise model configuration: 6-source enable/disable + parameters."""
     noise_enable: bool = False
-    noise_shot_enable: bool = True            # Source 1: shot noise
-    noise_thermal_enable: bool = True         # Source 2: thermal noise
-    noise_ambient_enable: bool = True         # Source 3: ambient light noise
-    noise_amplifier_enable: bool = True       # Source 4: amplifier noise
-    noise_adc_enable: bool = False            # Source 5: ADC quantization noise
-    noise_processing_enable: bool = False     # Source 6: processing/threshold noise
-    ina_noise_nV_rtHz: float = 45.0           # INA322 input-referred voltage noise density
-    ina_noise_current_pA_rtHz: float = 0.1    # INA322 input-referred current noise density
-    ambient_illuminance_lux: float = 0.0      # Background ambient light level
-    comparator_offset_mV: float = 1.0         # TLV7011 input offset voltage
-    comparator_jitter_ns: float = 5.0         # TLV7011 propagation delay jitter (1σ)
-    adc_bits: int = 12                        # ADC resolution (0 = no ADC in chain)
-    adc_vref: float = 3.3                     # ADC reference voltage
+    noise_shot_enable: bool = True
+    noise_thermal_enable: bool = True
+    noise_ambient_enable: bool = True
+    noise_amplifier_enable: bool = True
+    noise_adc_enable: bool = False
+    noise_processing_enable: bool = False
+
+    ina_noise_nV_rtHz: float = 45.0
+    ina_noise_current_pA_rtHz: float = 0.1
+    ambient_illuminance_lux: float = 0.0
+    comparator_offset_mV: float = 1.0
+    comparator_jitter_ns: float = 5.0
+    adc_bits: int = 12
+    adc_vref: float = 3.3
 
     # Legacy aliases (backward compat with old presets)
     shot_noise_enable: bool = True
     thermal_noise_enable: bool = True
 
-    # -- Multi-Paper Extensions ------------------------------------------------
-    # OFDM parameters (Sarwar 2017, Oliveira 2024)
+
+@dataclass
+class SimConfig:
+    """Simulation control parameters: timing, modulation, engine."""
+    t_stop_s: float = 1e-3
+    data_rate_bps: float = 5000.0
+    modulation: str = 'OOK'
+    prbs_order: int = 7
+    n_bits: int = 100
+    simulation_engine: str = 'spice'
+    random_seed: Optional[int] = None
+
+
+@dataclass
+class ModulationConfig:
+    """Scheme-specific modulation parameters (OFDM, BFSK, PWM-ASK)."""
+    # OFDM (Sarwar 2017, Oliveira 2024)
     ofdm_nfft: int = 256
     ofdm_qam_order: int = 16
     ofdm_n_subcarriers: int = 80
     ofdm_cp_len: int = 32
     ofdm_sample_rate_hz: float = 15e6
 
-    # BFSK parameters (Xu 2024)
+    # BFSK (Xu 2024)
     bfsk_f0_hz: float = 1600.0
     bfsk_f1_hz: float = 2000.0
 
-    # PWM-ASK parameters (Correa 2025)
+    # PWM-ASK (Correa 2025)
     pwm_freq_hz: float = 10.0
     carrier_freq_hz: float = 10000.0
 
-    # Environment (Correa 2025 greenhouse)
-    humidity_rh: Optional[float] = None   # relative humidity 0-1 for Beer-Lambert
-    temperature_K: float = 300.0
 
-    # Multi-cell / reconfigurable (Xu 2024)
-    n_cells_series: int = 1
-    n_cells_parallel: int = 1
-
-    # Receiver chain extensions (González 2024)
-    amp_gain_linear: float = 1.0          # voltage amplifier gain after INA
-    notch_freq_hz: Optional[float] = None # notch filter for mains rejection
-    notch_Q: float = 30.0
-
-    # -- Phase 4: Generalized Architecture ---------------------------------------
-    # RX topology: 'ina_bpf_comp' | 'amp_slicer' | 'direct' | 'auto'
-    # 'auto' means auto-detect from INA/BPF/amp fields in __post_init__
-    rx_topology: str = 'auto'
-    dcdc_enable: Optional[bool] = None    # None = auto-detect from dcdc_fsw_kHz > 0
-
-    # -- Phase 2: Enhanced Python Engine ----------------------------------------
-    # PV Cell ODE model
-    pv_ode_enable: bool = False           # Enable transient ODE solver (False = simple I=R*P)
-    pv_dark_current_A: float = 1e-10      # Diode saturation current I_s
-    pv_ideality_factor: float = 1.5       # Diode ideality factor n
-    pv_vbi_V: float = 1.1                 # Built-in voltage for C_j(V) model
-    pv_series_resistance_ohm: float = 2.5 # Series resistance Rs
-
-    # LED TX model
-    led_bandwidth_limit_enable: bool = False  # Apply LED frequency response to P_tx
-
-    # DC-DC converter (Python model params)
-    dcdc_rds_on_mohm: float = 52.0        # MOSFET on-resistance (NTS4409)
-    dcdc_diode_vf_V: float = 0.3          # Schottky forward voltage
-    dcdc_inductor_dcr_ohm: float = 0.5    # Inductor DC resistance
-
-    # Receiver chain model
-    rx_chain_enable: bool = False          # Enable detailed RX chain (False = simple TIA+demod)
-    comparator_prop_delay_ns: float = 260.0  # TLV7011 propagation delay
-
-    # -- Validation Targets (optional) -----------------------------------------
+@dataclass
+class ValidationConfig:
+    """Paper validation targets + metadata."""
     target_harvested_power_uW: Optional[float] = None
     target_ber: Optional[float] = None
     target_noise_rms_mV: Optional[float] = None
     target_data_rate_mbps: Optional[float] = None
     target_fec_threshold: Optional[float] = None
 
-    # -- Metadata --------------------------------------------------------------
     preset_name: str = ''
     paper_reference: str = ''
 
-    # -------------------------------------------------------------------------
-    # Validation
-    # -------------------------------------------------------------------------
+
+# Registry of sub-config classes in composition order
+_SUB_CONFIGS = (
+    TXConfig, ChannelConfig, RXConfig, NoiseConfig,
+    SimConfig, ModulationConfig, ValidationConfig,
+)
+
+
+# =============================================================================
+# SYSTEM CONFIG (FACADE)
+# =============================================================================
+
+# Build the set of all valid field names from all sub-configs
+_ALL_SUB_FIELDS: dict = {}  # field_name -> sub_config_class
+for _cls in _SUB_CONFIGS:
+    for _f in fields(_cls):
+        _ALL_SUB_FIELDS[_f.name] = _cls
+
+# Pre-built mapping: field_name -> sub-config attribute name on SystemConfig
+_CLS_TO_ATTR = {
+    TXConfig: 'tx',
+    ChannelConfig: 'channel',
+    RXConfig: 'rx',
+    NoiseConfig: 'noise',
+    SimConfig: 'sim',
+    ModulationConfig: 'modulation_config',
+    ValidationConfig: 'validation',
+}
+_SUB_ATTR_MAP: dict = {}  # field_name -> 'tx'|'channel'|'rx'|...
+for _fname, _cls in _ALL_SUB_FIELDS.items():
+    _SUB_ATTR_MAP[_fname] = _CLS_TO_ATTR[_cls]
+
+
+class SystemConfig:
+    """
+    Complete system configuration for a LiFi-PV simulation.
+
+    Composes domain sub-configs (TXConfig, ChannelConfig, RXConfig, etc.)
+    while exposing every field as a flat attribute for backward compatibility.
+
+    Construction supports both flat kwargs and sub-config instances:
+        cfg = SystemConfig(distance_m=0.5, modulation='OFDM')   # flat kwargs
+        cfg = SystemConfig(tx=TXConfig(...), rx=RXConfig(...))   # sub-configs
+        cfg = SystemConfig()                                      # all defaults
+
+    All existing code continues to work unchanged:
+        cfg.distance_m          # delegated to cfg.channel.distance_m
+        cfg.sc_responsivity     # delegated to cfg.rx.sc_responsivity
+    """
 
     _VALID_MODULATIONS = frozenset({
         'OOK', 'OOK_Manchester', 'OFDM', 'BFSK', 'PWM_ASK',
@@ -190,71 +270,114 @@ class SystemConfig:
         'ina_bpf_comp', 'amp_slicer', 'direct', 'auto',
     })
 
-    def __post_init__(self):
-        """Validate parameter ranges and auto-detect derived fields."""
+    # Names of the sub-config attributes (used by __getattr__, __setattr__)
+    _SUB_ATTR_NAMES = frozenset({
+        'tx', 'channel', 'rx', 'noise', 'sim', 'modulation_config', 'validation',
+    })
+
+    def __init__(self, *, tx=None, channel=None, rx=None, noise=None,
+                 sim=None, modulation_config=None, validation=None, **kwargs):
+        """
+        Initialize SystemConfig.
+
+        Accepts sub-config instances (tx=TXConfig(...)) and/or flat kwargs
+        (distance_m=0.5). Flat kwargs are routed to the appropriate sub-config.
+        """
+        # Route flat kwargs to sub-config buckets
+        sub_kwargs = {
+            'tx': {}, 'channel': {}, 'rx': {}, 'noise': {},
+            'sim': {}, 'modulation_config': {}, 'validation': {},
+        }
+        for key, value in kwargs.items():
+            if key in _ALL_SUB_FIELDS:
+                sub_name = _SUB_ATTR_MAP[key]
+                sub_kwargs[sub_name][key] = value
+            # Unknown keys silently ignored (forward compat)
+
+        # Construct sub-configs: explicit instance wins, then merge flat kwargs
+        object.__setattr__(self, 'tx', tx or TXConfig(**sub_kwargs['tx']))
+        object.__setattr__(self, 'channel', channel or ChannelConfig(**sub_kwargs['channel']))
+        object.__setattr__(self, 'rx', rx or RXConfig(**sub_kwargs['rx']))
+        object.__setattr__(self, 'noise', noise or NoiseConfig(**sub_kwargs['noise']))
+        object.__setattr__(self, 'sim', sim or SimConfig(**sub_kwargs['sim']))
+        object.__setattr__(self, 'modulation_config', modulation_config or ModulationConfig(**sub_kwargs['modulation_config']))
+        object.__setattr__(self, 'validation', validation or ValidationConfig(**sub_kwargs['validation']))
+
+        # Build routing table for __getattr__ / __setattr__
+        object.__setattr__(self, '_FIELD_TO_SUB', dict(_SUB_ATTR_MAP))
+
+        # Auto-detect and validate
+        self._post_init()
+
+    def _post_init(self):
+        """Auto-detect derived fields and validate."""
         # --- Auto-detect rx_topology ---
-        if self.rx_topology == 'auto':
-            has_ina = self.ina_gain_dB > 0 and self.ina_part != 'N/A'
-            has_bpf = self.bpf_stages > 0
-            has_amp = self.amp_gain_linear > 1 or (has_ina and not has_bpf)
+        if self.rx.rx_topology == 'auto':
+            has_ina = self.rx.ina_gain_dB > 0 and self.rx.ina_part != 'N/A'
+            has_bpf = self.rx.bpf_stages > 0
+            has_amp = self.rx.amp_gain_linear > 1 or (has_ina and not has_bpf)
             if has_ina and has_bpf:
-                object.__setattr__(self, 'rx_topology', 'ina_bpf_comp')
+                self.rx.rx_topology = 'ina_bpf_comp'
             elif has_amp or (has_ina and not has_bpf):
-                object.__setattr__(self, 'rx_topology', 'amp_slicer')
+                self.rx.rx_topology = 'amp_slicer'
             else:
-                object.__setattr__(self, 'rx_topology', 'direct')
+                self.rx.rx_topology = 'direct'
 
         # --- Auto-detect dcdc_enable ---
-        if self.dcdc_enable is None:
-            object.__setattr__(self, 'dcdc_enable', self.dcdc_fsw_kHz > 0)
+        if self.rx.dcdc_enable is None:
+            self.rx.dcdc_enable = self.rx.dcdc_fsw_kHz > 0
 
+        # --- Validation ---
         errors = []
 
-        if self.distance_m <= 0:
-            errors.append(f"distance_m must be > 0, got {self.distance_m}")
-        if self.data_rate_bps <= 0:
-            errors.append(f"data_rate_bps must be > 0, got {self.data_rate_bps}")
-        if self.modulation not in self._VALID_MODULATIONS:
+        if self.channel.distance_m <= 0:
+            errors.append(f"distance_m must be > 0, got {self.channel.distance_m}")
+        if self.sim.data_rate_bps <= 0:
+            errors.append(f"data_rate_bps must be > 0, got {self.sim.data_rate_bps}")
+        if self.sim.modulation not in self._VALID_MODULATIONS:
             errors.append(
                 f"modulation must be one of {sorted(self._VALID_MODULATIONS)}, "
-                f"got '{self.modulation}'"
+                f"got '{self.sim.modulation}'"
             )
-        if self.rx_topology not in self._VALID_TOPOLOGIES:
+        if self.rx.rx_topology not in self._VALID_TOPOLOGIES:
             errors.append(
                 f"rx_topology must be one of {sorted(self._VALID_TOPOLOGIES)}, "
-                f"got '{self.rx_topology}'"
+                f"got '{self.rx.rx_topology}'"
             )
-        if self.bpf_f_low_Hz >= self.bpf_f_high_Hz and self.bpf_f_low_Hz > 0:
+        if self.rx.bpf_f_low_Hz >= self.rx.bpf_f_high_Hz and self.rx.bpf_f_low_Hz > 0:
             errors.append(
-                f"bpf_f_low_Hz ({self.bpf_f_low_Hz}) must be < "
-                f"bpf_f_high_Hz ({self.bpf_f_high_Hz})"
+                f"bpf_f_low_Hz ({self.rx.bpf_f_low_Hz}) must be < "
+                f"bpf_f_high_Hz ({self.rx.bpf_f_high_Hz})"
             )
 
         # Channel validation
-        if self.fov_half_angle_deg <= 0 or self.fov_half_angle_deg > 90:
+        if self.channel.fov_half_angle_deg <= 0 or self.channel.fov_half_angle_deg > 90:
             errors.append(
-                f"fov_half_angle_deg must be in (0, 90], got {self.fov_half_angle_deg}"
+                f"fov_half_angle_deg must be in (0, 90], got {self.channel.fov_half_angle_deg}"
             )
-        if self.n_reflections < 0:
-            errors.append(f"n_reflections must be >= 0, got {self.n_reflections}")
-        if self.wall_reflectivity < 0 or self.wall_reflectivity > 1:
+        if self.channel.n_reflections < 0:
+            errors.append(f"n_reflections must be >= 0, got {self.channel.n_reflections}")
+        if self.channel.wall_reflectivity < 0 or self.channel.wall_reflectivity > 1:
             errors.append(
-                f"wall_reflectivity must be in [0, 1], got {self.wall_reflectivity}"
+                f"wall_reflectivity must be in [0, 1], got {self.channel.wall_reflectivity}"
             )
 
         # Noise validation
-        if self.ambient_illuminance_lux < 0:
+        if self.noise.ambient_illuminance_lux < 0:
             errors.append(
-                f"ambient_illuminance_lux must be >= 0, got {self.ambient_illuminance_lux}"
+                f"ambient_illuminance_lux must be >= 0, got {self.noise.ambient_illuminance_lux}"
             )
 
         # Physical quantities must be non-negative
         for field_name in ('sc_area_cm2', 'sc_responsivity', 'sc_cj_nF',
-                           'led_radiated_power_mW', 'r_sense_ohm',
-                           'bias_current_A', 'vcc_volts'):
-            val = getattr(self, field_name)
+                           'r_sense_ohm', 'vcc_volts'):
+            val = getattr(self.rx, field_name)
             if val < 0:
                 errors.append(f"{field_name} must be >= 0, got {val}")
+        if self.tx.led_radiated_power_mW < 0:
+            errors.append(f"led_radiated_power_mW must be >= 0, got {self.tx.led_radiated_power_mW}")
+        if self.tx.bias_current_A < 0:
+            errors.append(f"bias_current_A must be >= 0, got {self.tx.bias_current_A}")
 
         if errors:
             raise ValueError(
@@ -262,12 +385,89 @@ class SystemConfig:
             )
 
     # -------------------------------------------------------------------------
-    # Serialization
+    # Flat attribute access (backward compatibility)
+    # -------------------------------------------------------------------------
+
+    def __getattr__(self, name: str):
+        """Delegate flat field access to the appropriate sub-config."""
+        # Avoid infinite recursion during __init__ / unpickling
+        if name.startswith('_') or name in ('tx', 'channel', 'rx', 'noise',
+                                             'sim', 'modulation_config', 'validation'):
+            raise AttributeError(name)
+
+        # Check routing table
+        routing = object.__getattribute__(self, '_FIELD_TO_SUB')
+        if name in routing:
+            sub_name = routing[name]
+            sub = object.__getattribute__(self, sub_name)
+            return getattr(sub, name)
+
+        raise AttributeError(
+            f"'SystemConfig' object has no attribute '{name}'"
+        )
+
+    def __setattr__(self, name: str, value):
+        """Delegate flat field writes to the appropriate sub-config."""
+        # Allow setting sub-config instances and private attrs directly
+        if name in ('tx', 'channel', 'rx', 'noise', 'sim',
+                    'modulation_config', 'validation', '_FIELD_TO_SUB'):
+            object.__setattr__(self, name, value)
+            return
+
+        # Route to sub-config if it's a known field
+        try:
+            routing = object.__getattribute__(self, '_FIELD_TO_SUB')
+        except AttributeError:
+            # During __init__ before _FIELD_TO_SUB exists
+            object.__setattr__(self, name, value)
+            return
+
+        if name in routing:
+            sub_name = routing[name]
+            sub = object.__getattribute__(self, sub_name)
+            setattr(sub, name, value)
+            return
+
+        object.__setattr__(self, name, value)
+
+    # -------------------------------------------------------------------------
+    # Copy / replace (backward compat for dataclasses.replace())
+    # -------------------------------------------------------------------------
+
+    def replace(self, **kwargs) -> 'SystemConfig':
+        """Create a copy with flat kwargs overridden.  Replaces dataclasses.replace()."""
+        d = self.to_dict()
+        d.update(kwargs)
+        return SystemConfig._from_flat_dict(d)
+
+    def __replace__(self, **kwargs) -> 'SystemConfig':
+        """Support dataclasses.replace() protocol (Python 3.13+)."""
+        return self.replace(**kwargs)
+
+    def __repr__(self) -> str:
+        name = self.validation.preset_name or 'Custom'
+        return (f"SystemConfig({name}: "
+                f"LED={self.tx.led_part}, PV={self.rx.pv_part}, "
+                f"d={self.channel.distance_m*100:.0f}cm, "
+                f"rate={self.sim.data_rate_bps/1e3:.0f}kbps)")
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, SystemConfig):
+            return NotImplemented
+        return self.to_dict() == other.to_dict()
+
+    # -------------------------------------------------------------------------
+    # Serialization (flat dict — backward compatible)
     # -------------------------------------------------------------------------
 
     def to_dict(self) -> dict:
-        """Convert to plain dict."""
-        return asdict(self)
+        """Convert to flat dict (same format as before decomposition)."""
+        result = {}
+        for sub_attr in ('tx', 'channel', 'rx', 'noise', 'sim',
+                         'modulation_config', 'validation'):
+            sub = getattr(self, sub_attr)
+            result.update(asdict(sub))
+        return result
 
     def to_json(self, indent: int = 2) -> str:
         """Serialize to JSON string."""
@@ -280,14 +480,49 @@ class SystemConfig:
         path.write_text(self.to_json(), encoding='utf-8')
 
     @classmethod
+    def _from_flat_dict(cls, data: dict) -> 'SystemConfig':
+        """
+        Create SystemConfig from a flat dict (JSON preset format).
+
+        Routes each key to the appropriate sub-config based on field membership.
+        Unknown keys are silently ignored for forward compatibility.
+        """
+        sub_kwargs = {
+            'tx': {}, 'channel': {}, 'rx': {}, 'noise': {},
+            'sim': {}, 'modulation_config': {}, 'validation': {},
+        }
+        sub_attr_names = {
+            TXConfig: 'tx',
+            ChannelConfig: 'channel',
+            RXConfig: 'rx',
+            NoiseConfig: 'noise',
+            SimConfig: 'sim',
+            ModulationConfig: 'modulation_config',
+            ValidationConfig: 'validation',
+        }
+
+        for key, value in data.items():
+            if key in _ALL_SUB_FIELDS:
+                sub_name = sub_attr_names[_ALL_SUB_FIELDS[key]]
+                sub_kwargs[sub_name][key] = value
+            # Unknown keys silently ignored (forward compat)
+
+        return cls(
+            tx=TXConfig(**sub_kwargs['tx']),
+            channel=ChannelConfig(**sub_kwargs['channel']),
+            rx=RXConfig(**sub_kwargs['rx']),
+            noise=NoiseConfig(**sub_kwargs['noise']),
+            sim=SimConfig(**sub_kwargs['sim']),
+            modulation_config=ModulationConfig(**sub_kwargs['modulation_config']),
+            validation=ValidationConfig(**sub_kwargs['validation']),
+        )
+
+    @classmethod
     def load(cls, path) -> 'SystemConfig':
         """Load configuration from JSON file."""
         path = Path(path)
         data = json.loads(path.read_text(encoding='utf-8'))
-        # Filter out unknown keys so old configs still load
-        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
-        filtered = {k: v for k, v in data.items() if k in valid_fields}
-        return cls(**filtered)
+        return cls._from_flat_dict(data)
 
     @classmethod
     def from_preset(cls, name: str) -> 'SystemConfig':
@@ -358,7 +593,7 @@ class SystemConfig:
         noise_total = np.sqrt(noise_shot**2 + noise_thermal**2)
         if noise_total > 0:
             return float(20 * np.log10(I_signal / noise_total))
-        return 200.0  # Cap at 200 dB (effectively noiseless)
+        return 200.0
 
     def __str__(self) -> str:
         name = self.preset_name or 'Custom'

@@ -27,15 +27,20 @@ _KEYRING_SERVICE = 'lifi_pv_simulator'
 _KEYRING_KEY = 'gemini_api_key'
 
 
-def _store_api_key(key: str) -> None:
-    """Store API key securely via keyring, fallback to QSettings."""
-    if _keyring is not None:
-        try:
-            _keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, key)
-            return
-        except Exception:
-            pass
-    # Fallback handled by caller via QSettings
+def _store_api_key(key: str) -> bool:
+    """Store API key via keyring. Returns True on success, False otherwise.
+
+    When False, caller should persist to QSettings as a fallback.
+    """
+    if _keyring is None:
+        return False
+    try:
+        _keyring.set_password(_KEYRING_SERVICE, _KEYRING_KEY, key)
+        return True
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "keyring unavailable, falling back to QSettings: %s", exc)
+        return False
 
 
 def _load_api_key(settings) -> str:
@@ -45,8 +50,9 @@ def _load_api_key(settings) -> str:
             val = _keyring.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
             if val:
                 return val
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "keyring read failed, trying QSettings: %s", exc)
     return settings.value('gemini_api_key', '')
 
 from PyQt6.QtWidgets import (
@@ -404,10 +410,12 @@ class PaperReaderDialog(QDialog):
             model_name = self._ollama_model_combo.currentText()
         self._settings.setValue('paper_reader_ollama_model', model_name)
         api_key = self._key_edit.text().strip()
-        _store_api_key(api_key)
-        if _keyring is None:
+        if not _store_api_key(api_key):
             # Fallback: store in QSettings (plaintext) if keyring unavailable
             self._settings.setValue('gemini_api_key', api_key)
+        else:
+            # Keyring succeeded — clear any stale plaintext copy
+            self._settings.remove('gemini_api_key')
         if self._pdf_edit.text():
             self._settings.setValue(
                 'paper_reader_last_dir',

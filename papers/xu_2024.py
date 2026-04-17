@@ -21,6 +21,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy.special import erfc
 
+from papers.shared import save_figure, validation_header
+
 # =============================================================================
 # PAPER PARAMETERS (LOCKED)
 # =============================================================================
@@ -169,10 +171,7 @@ def _plot_charging(output_dir):
     ax.set_ylabel('Supercap Voltage (V)', fontsize=12)
     ax.set_title('Charging at 50 klux (Xu 2024)', fontweight='bold')
     ax.grid(True, alpha=0.3); ax.legend(); ax.set_xlim([0, 60]); ax.set_ylim([0, 5])
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'charging_curves.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'charging_curves.png')
 
 
 def _plot_pareto(output_dir):
@@ -192,10 +191,7 @@ def _plot_pareto(output_dir):
         ax.grid(True, alpha=0.3); ax.legend()
         ax.set_xlim([0, 1]); ax.set_ylim([0, 1])
 
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'pareto_frontiers.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'pareto_frontiers.png')
 
 
 def _plot_psr_vs_distance(output_dir):
@@ -219,10 +215,7 @@ def _plot_psr_vs_distance(output_dir):
     ax.set_ylabel('Packet Success Rate (%)', fontsize=12)
     ax.set_title('PSR vs Distance at 50 klux (Xu 2024)', fontweight='bold')
     ax.grid(True, alpha=0.3); ax.legend(); ax.set_xlim([0, 25]); ax.set_ylim([0, 105])
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'psr_vs_distance.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'psr_vs_distance.png')
 
 
 def _plot_lc_dynamics(output_dir):
@@ -252,10 +245,7 @@ def _plot_lc_dynamics(output_dir):
     ax.grid(True, alpha=0.3); ax.legend()
     ax.annotate(f'Rise: {LC_SHUTTER["rise_time_ms"]}ms', xy=(3, 0.5), fontsize=10)
     ax.annotate(f'Fall: {LC_SHUTTER["fall_time_ms"]}ms', xy=(6.5, 0.5), fontsize=10)
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'lc_shutter_dynamics.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'lc_shutter_dynamics.png')
 
 
 def _plot_config_comparison(output_dir):
@@ -281,10 +271,7 @@ def _plot_config_comparison(output_dir):
     ax2.set_ylabel('Voc (V)'); ax2.set_title('Open-Circuit Voltage', fontweight='bold')
     ax2.legend(); ax2.grid(True, alpha=0.3, axis='y')
 
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'config_comparison.png')
-    plt.savefig(path, dpi=150, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'config_comparison.png')
 
 
 # =============================================================================
@@ -293,14 +280,12 @@ def _plot_config_comparison(output_dir):
 
 def run_validation(output_dir=None):
     """Run Xu 2024 Sunlight-Duo validation."""
-    if output_dir is None:
-        output_dir = os.path.join('workspace', 'validation_xu2024')
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("\n" + "=" * 65)
-    print("  XU et al. (2024) 'SUNLIGHT-DUO' - VALIDATION")
-    print("  EWSN 2024")
-    print("=" * 65)
+    output_dir = validation_header(
+        "XU et al. (2024) 'SUNLIGHT-DUO' - VALIDATION",
+        'EWSN 2024',
+        output_dir=output_dir,
+        default_subdir='validation_xu2024',
+    )
 
     # 1. Solar Array Electrical
     print("\n[1] SOLAR ARRAY CONFIGURATIONS")

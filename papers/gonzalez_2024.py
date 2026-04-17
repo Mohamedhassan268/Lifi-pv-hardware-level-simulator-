@@ -19,6 +19,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy import signal as sp_signal
 
+from papers.shared import save_figure, validation_header, validate_metric, print_validation_summary
+
 PARAMS = {
     'C_j_nF': 14.5,
     'R_sh_kohm': 200.0,
@@ -198,10 +200,7 @@ def _plot_all(output_dir, R_loads, bws, td, levels, bers):
     ax.set_title('Vpp vs Load of PV Panel (Fig. 3)', fontsize=13, fontweight='bold')
     ax.grid(True, alpha=0.3); ax.legend(fontsize=9)
     ax.set_ylim([0, 650]); ax.set_xlim([8, 2e6])
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig3_vpp_vs_load.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig3_vpp_vs_load.png', dpi=200)
 
     # Fig 7: TX vs RX Manchester waveforms
     fig7, (ax_rx, ax_tx) = plt.subplots(2, 1, figsize=(7, 5.5), sharex=True)
@@ -217,10 +216,7 @@ def _plot_all(output_dir, R_loads, bws, td, levels, bers):
     ax_tx.set_xlabel('Time [ms]', fontsize=10)
     ax_tx.set_title('Transmitted Signal', fontsize=10)
     ax_tx.set_ylim([-0.2, 3.6]); ax_tx.grid(True, alpha=0.3)
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'fig7_rx_tx_manchester.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'fig7_rx_tx_manchester.png', dpi=200)
 
     # Combined validation
     fig_c, axes = plt.subplots(1, 3, figsize=(16, 5))
@@ -252,37 +248,31 @@ def _plot_all(output_dir, R_loads, bws, td, levels, bers):
     ax.set_title('BER vs Interference Level', fontweight='bold')
     ax.grid(True, alpha=0.3); ax.set_ylim([1e-4, 1])
 
-    plt.tight_layout()
-    path = os.path.join(output_dir, 'gonzalez_validation_combined.png')
-    plt.savefig(path, dpi=200, bbox_inches='tight'); plt.close()
-    print(f"    Saved: {path}")
+    save_figure(output_dir, 'gonzalez_validation_combined.png', dpi=200)
 
 
 def run_validation(output_dir=None):
-    if output_dir is None:
-        output_dir = os.path.join('workspace', 'validation_gonzalez2024')
-    os.makedirs(output_dir, exist_ok=True)
-
-    print("\n" + "=" * 65)
-    print("  GONZALEZ-URIARTE et al. (2024) - LOW-COST VLC VALIDATION")
-    print("  IEEE LATINCOM 2024")
-    print("=" * 65)
+    output_dir = validation_header(
+        'GONZALEZ-URIARTE et al. (2024) - LOW-COST VLC VALIDATION',
+        'IEEE LATINCOM 2024',
+        output_dir=output_dir,
+        default_subdir='validation_gonzalez2024',
+    )
 
     R_loads, bws, bw_220 = sim_bandwidth_vs_load()
-    bw_err = abs(bw_220 - TARGETS['bw_at_220_hz']) / TARGETS['bw_at_220_hz'] * 100
-    print(f"\n  BW @ 220 Ohm: {bw_220/1e3:.1f} kHz (target: 50 kHz), error: {bw_err:.1f}%")
-
     td = sim_time_domain(n_bits=200)
-    print(f"  BER @ 4.8 kBd: {td['ber']:.4f}")
-
     levels, bers = sim_ber_vs_interference()
+
+    results = [
+        validate_metric(bw_220, TARGETS['bw_at_220_hz'], 'BW @ 220 Ohm', unit='Hz'),
+        validate_metric(td['ber'], 0.0, 'BER @ 4.8 kBd', threshold_pct=100),
+    ]
     print(f"  BER @ 100% interference: {bers[5]:.4f}")
 
     print("\n  Generating figures...")
     _plot_all(output_dir, R_loads, bws, td, levels, bers)
 
-    all_pass = bw_err < 20 and td['ber'] < 0.01
-    print(f"\n  Overall: {'PASS' if all_pass else 'REVIEW'}")
+    all_pass = print_validation_summary(results)
     print(f"  Output: {output_dir}")
     return all_pass
 
