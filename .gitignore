@@ -29,3 +29,24 @@ workspace/
 # Virtual environment
 venv/
 .venv/
+
+# Bundled SPICE binary (users install ngspice separately)
+ngspice-45.2_64/
+
+# Vendor SPICE libraries (download separately — see README)
+spice_libs/wurth/
+
+# Generated artifacts at repo root
+*.png
+*.pdf
+!schematics/*.png
+!schematics/*.svg
+!docs/**/*.png
+
+# Stray dirs / files
+.sixth/
+{components,materials,spice_parser,utils,tests,docs}/
+kxob25_receiver.cir
+
+# Local environment overrides
+.env

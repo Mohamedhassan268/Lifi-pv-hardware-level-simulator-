@@ -35,8 +35,8 @@ The simulator faithfully models every component in the signal chain — from LED
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd hardware_faithful_simulator
+git clone https://github.com/Mohamedhassan268/Lifi-pv-hardware-level-simulator-.git
+cd Lifi-pv-hardware-level-simulator-
 
 # Create virtual environment
 python -m venv .venv
@@ -76,6 +76,27 @@ pip install -r requirements-optional.txt
 | `google-genai` | AI paper reader (Gemini API)       |
 | `pdfplumber`   | PDF text extraction                |
 | `keyring`      | Secure API key storage             |
+
+### External Resources (not bundled in the repo)
+
+These are excluded from the repository to keep it small and respect vendor distribution. Install or download separately as needed:
+
+| Resource | Where to get it | Where to put it |
+|----------|-----------------|-----------------|
+| **ngspice** (Windows) | https://ngspice.sourceforge.io/download.html | Anywhere on PATH, or extract into `ngspice-45.2_64/` (auto-detected) |
+| **ngspice** (Linux/macOS) | `apt install ngspice` / `brew install ngspice` | Auto-detected on PATH |
+| **LTspice** | https://www.analog.com/en/resources/design-tools-and-calculators/ltspice-simulator.html | Default install path (auto-detected on Windows) |
+| **Würth Elektronik SPICE library** | https://www.we-online.com/en/components/products/download-center | Extract into `spice_libs/wurth/` |
+
+### Environment variables
+
+The AI paper-parameter extractor (`ai/`) reads its API key from the environment. Copy `.env.example` to `.env` and fill in:
+
+```bash
+GEMINI_API_KEY=your-key-here   # Get one at https://aistudio.google.com/apikey
+```
+
+This is only needed if you use the AI paper reader; the rest of the simulator works without it.
 
 ### Verify SPICE Engine
 
@@ -195,8 +216,7 @@ hardware_faithful_simulator/
 |-- presets/                # 7 JSON configuration files
 |-- gui/                    # PyQt6 desktop GUI (7 tabs)
 |-- spice_models/           # SPICE device model files
-|-- ngspice-45.2_64/        # Bundled ngspice for Windows
-|-- workspace/              # Simulation session storage
+|-- workspace/              # Simulation session storage (gitignored)
 |-- tests/                  # Test suite
 ```
 
