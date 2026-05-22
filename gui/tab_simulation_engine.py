@@ -16,7 +16,7 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QPushButton, QPlainTextEdit, QSplitter, QProgressBar,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QCheckBox,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QElapsedTimer
 
@@ -115,6 +115,22 @@ class SimulationEngineTab(QWidget):
                 f'color: {COLORS["warning"]}; background: {COLORS["warning_bg"]}; '
                 f'padding: 2px 8px; border-radius: 3px; font-size: 11px;')
             status_row.addWidget(self._spice_warning)
+
+        # ---- Dual-engine compare toggle (Phase A migration) ----
+        # When checked, run_step_rx executes BOTH the LTspice/ngspice
+        # subprocess path AND the in-process PySpice+scipy hybrid. Outputs
+        # land at <session>/raw/{receiver.raw,pyspice_rx.npz}. Off by
+        # default; toggle while iterating on the migration.
+        self._engine_compare_chk = QCheckBox('Dual-run: LTspice + PySpice')
+        self._engine_compare_chk.setToolTip(
+            'When ON, every RX step runs both the legacy LTspice/ngspice path\n'
+            'and the new PySpice+scipy hybrid path, saving both outputs to the\n'
+            'session for offline equivalence diff (scripts/diff_traces.py).\n'
+            'Doubles RX runtime; off by default.')
+        self._engine_compare_chk.setChecked(
+            bool(getattr(self._config, 'engine_compare', False)))
+        self._engine_compare_chk.toggled.connect(self._on_engine_compare_toggled)
+        status_row.addWidget(self._engine_compare_chk)
 
         status_row.addStretch()
         self._session_label = QLabel('Session: (none)')
@@ -246,6 +262,25 @@ class SimulationEngineTab(QWidget):
     def update_config(self, config: SystemConfig):
         self._config = config
         self._update_engine_label()
+        # Reflect the loaded preset's engine_compare value without firing
+        # the toggled signal (which would write back into the new config).
+        if hasattr(self, '_engine_compare_chk'):
+            self._engine_compare_chk.blockSignals(True)
+            self._engine_compare_chk.setChecked(
+                bool(getattr(config, 'engine_compare', False)))
+            self._engine_compare_chk.blockSignals(False)
+
+    def _on_engine_compare_toggled(self, checked: bool):
+        """User flipped the dual-run checkbox; mirror into the live config."""
+        if self._config is not None:
+            self._config.engine_compare = bool(checked)
+        self._log_msg(
+            f'engine_compare = {bool(checked)} '
+            f'(PySpice path will{" " if checked else " NOT "}run alongside LTspice)')
+
+    def run_all(self):
+        """Public entry point so the top-bar Run button can trigger a full pipeline."""
+        self._run_steps('all')
 
     def _update_engine_label(self):
         """Update the engine mode indicator based on current config."""
