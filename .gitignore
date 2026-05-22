@@ -50,3 +50,7 @@ kxob25_receiver.cir
 
 # Local environment overrides
 .env
+
+# Debug artifacts from spike / scratch scripts (leading underscore)
+# Includes _dual_run_session/, _dump_*.cir, _min_*.cir, _spike_log.txt
+scripts/_*
