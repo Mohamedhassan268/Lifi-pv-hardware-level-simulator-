@@ -335,9 +335,26 @@ class SimulationPipeline:
                 except Exception as e:
                     logger.warning("ngspice simulation failed: %s", e)
 
+            # ---- PySpice (Phase A migration) ----
+            # Runs in addition to LTspice when engine_compare is True, or
+            # standalone when simulation_engine == 'pyspice'. Uses the
+            # cached optical waveform from run_step_channel instead of
+            # the PWL file path (no file IO required).
+            wants_pyspice = (
+                getattr(cfg, 'engine_compare', False)
+                or cfg.simulation_engine == 'pyspice'
+            )
+            if wants_pyspice:
+                py_result = self._run_rx_pyspice()
+                if py_result is not None:
+                    self.step_rx.outputs['pyspice'] = py_result
+                    if cfg.simulation_engine == 'pyspice':
+                        sim_engine = 'pyspice'
+                        raw_data = True  # silence the no-engine error
+
             if sim_engine == 'none':
                 self.step_rx.status = 'error'
-                self.step_rx.message = 'No SPICE engine available (LTspice or ngspice)'
+                self.step_rx.message = 'No SPICE engine available (LTspice/ngspice/pyspice)'
                 self.step_rx.duration_s = _time.time() - t0
                 self._notify('RX', 'error', self.step_rx.message)
                 return self.step_rx
@@ -356,6 +373,63 @@ class SimulationPipeline:
             self._notify('RX', 'error', str(e))
 
         return self.step_rx
+
+    # -------------------------------------------------------------------------
+    # PySpice path (Phase A migration)
+    # -------------------------------------------------------------------------
+
+    def _run_rx_pyspice(self) -> Optional[Dict]:
+        """Run the hybrid PySpice + scipy RX-chain transient.
+
+        Uses cached self._time and self._P_rx from run_step_channel (no
+        PWL file parsing). Saves waveforms as `pyspice_rx.npz` in the
+        session and returns a dict of file paths + metadata. Returns
+        None if libngspice is unavailable.
+        """
+        from .pyspice_runner import PySpiceRxRunner
+
+        if not PySpiceRxRunner.available():
+            logger.info("PySpice/libngspice unavailable; skipping pyspice path")
+            return None
+
+        if self._time is None or self._P_rx is None:
+            logger.warning("Cannot run PySpice path: channel step did not "
+                           "cache optical waveform")
+            return None
+
+        try:
+            self._notify('RX', 'running', 'Running PySpice (hybrid 2-stage)...')
+            runner = PySpiceRxRunner(self.config)
+            t_arr = self._time
+            t_stop = float(t_arr[-1]) if len(t_arr) > 0 else self.config.t_stop_s
+            t_step = t_stop / max(len(t_arr), 1000)
+            wf = runner.run_transient(
+                optical_t=t_arr,
+                optical_v=self._P_rx,
+                duration_s=t_stop,
+                t_step_s=t_step,
+            )
+            npz_path = self.session_dir / 'raw' / 'pyspice_rx.npz'
+            npz_path.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(
+                npz_path,
+                t=wf.t,
+                **{k: v for k, v in wf.nodes.items()},
+            )
+            logger.info("PySpice RX waveforms saved: %s", npz_path)
+            return {
+                'engine': wf.meta.get('engine', 'pyspice+scipy_bpf'),
+                'npz_file': str(npz_path),
+                'duration_s': wf.meta.get('duration_s', 0.0),
+                'duration_stage_a_s': wf.meta.get('duration_stage_a_s', 0.0),
+                'duration_stage_b_s': wf.meta.get('duration_stage_b_s', 0.0),
+                'duration_stage_c_s': wf.meta.get('duration_stage_c_s', 0.0),
+                'n_points': wf.meta.get('n_points', len(wf.t)),
+                'nodes': sorted(wf.nodes.keys()),
+            }
+        except Exception as e:
+            logger.warning("PySpice RX simulation failed: %s", e)
+            return {'engine': 'pyspice', 'error': str(e)}
 
     # -------------------------------------------------------------------------
     # Run all 3 steps

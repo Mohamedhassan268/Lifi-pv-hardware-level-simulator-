@@ -195,6 +195,12 @@ class SimConfig:
     # reproduce the original publication's bit count.
     n_bits: int = 10000
     simulation_engine: str = 'spice'
+    # When True, run_step_rx executes BOTH the existing LTspice/ngspice
+    # subprocess path AND the in-process PySpice+scipy path (Phase A
+    # migration). Outputs from both are saved to the session so an
+    # equivalence diff can be computed offline. Off by default; flip
+    # per-run via the GUI or a preset for verification work.
+    engine_compare: bool = False
     random_seed: Optional[int] = None
 
     # Glass-box observability (Phase 8). capture_probes accepts either the
