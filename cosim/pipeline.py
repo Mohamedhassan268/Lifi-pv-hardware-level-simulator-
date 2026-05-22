@@ -300,7 +300,11 @@ class SimulationPipeline:
 
             if self.ltspice.available:
                 self._notify('RX', 'running', 'Running LTspice...')
-                ok = self.ltspice.run_transient(str(cir_path), timeout_s=120)
+                # Timeout pulled from config (default 600 s). Default 120 s
+                # was fine for cfg.t_stop_s <= 5 ms but starves on the
+                # boost-converter switching at 50 ms+ windows.
+                _lt_timeout = getattr(cfg, 'ltspice_timeout_s', 600.0)
+                ok = self.ltspice.run_transient(str(cir_path), timeout_s=_lt_timeout)
                 if ok:
                     sim_engine = 'LTspice'
                     raw_path = self.ltspice.get_raw_path()
@@ -400,11 +404,14 @@ class SimulationPipeline:
         try:
             self._notify('RX', 'running', 'Running PySpice (hybrid 2-stage)...')
             runner = PySpiceRxRunner(self.config)
-            t_arr = self._time
-            t_stop = float(t_arr[-1]) if len(t_arr) > 0 else self.config.t_stop_s
-            t_step = t_stop / max(len(t_arr), 1000)
+            # Match LTspice: use cfg.t_stop_s (the simulator's observation
+            # window), not self._time[-1] which spans the full modulated
+            # bitstream length. PySpice will linearly interpolate the
+            # optical PWL within the [0, t_stop_s] window.
+            t_stop = self.config.t_stop_s
+            t_step = t_stop / 1000.0
             wf = runner.run_transient(
-                optical_t=t_arr,
+                optical_t=self._time,
                 optical_v=self._P_rx,
                 duration_s=t_stop,
                 t_step_s=t_step,
@@ -976,6 +983,10 @@ Voptical optical_power 0 PWL file="{pwl_str}"
 * =====================================================================
 * SIMULATION COMMANDS
 * =====================================================================
+* Restrict saved waveforms so .raw stays small for long runs (Phase B chunk 2).
+* All 8 nodes here are the ones cosim/spice_extract.py's NODE_MAP consumes;
+* dropping the other ~34 default traces shrinks the .raw ~10x.
+.save V(sc_anode) V(sc_cathode) V(sense_lo) V(optical_power) V(ina_out) V(bpf1_out) V(bpf_out) V(dout) V(dcdc_out)
 .tran {t_step:.2e} {t_stop:.2e} 0 {t_step:.2e}
 .OPTIONS reltol=0.001 abstol=1e-12 vntol=1e-6
 

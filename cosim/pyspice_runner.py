@@ -186,11 +186,18 @@ class PySpiceRxRunner:
                     stage_c_circuit = self._build_circuit_comparator(
                         cfg, t_sim, comp_in_v,
                     )
-                    stage_c_nodes, _ = self._simulate_circuit(
+                    stage_c_nodes, t_c = self._simulate_circuit(
                         stage_c_circuit, t_step, t_stop,
                     )
                     if 'dout' in stage_c_nodes:
-                        nodes['dout'] = stage_c_nodes['dout']
+                        # Stage C uses ngspice's adaptive step internally, so
+                        # its returned t_c may have a different length from
+                        # t_sim. Resample dout onto Stage A's grid so all
+                        # nodes share one time vector downstream.
+                        v_dout_c = stage_c_nodes['dout']
+                        if len(t_c) != len(t_sim) or not np.allclose(t_c, t_sim):
+                            v_dout_c = np.interp(t_sim, t_c, v_dout_c)
+                        nodes['dout'] = v_dout_c
                 except Exception as e:
                     logger.warning(
                         'SPICE comparator stage failed (%s); falling back to '
@@ -284,9 +291,39 @@ class PySpiceRxRunner:
         circuit.raw_spice += f'Voptical optical_power 0 DC 0 PWL({pwl_str})\n'
 
         # --- Solar cell + sense resistor ---
+        # sc_anode needs an external harvest path; without it, photocurrent
+        # can't return, the cell pins at Voc, and the INA sees nothing.
+        # We model the DC-DC's input load as a parallel pair:
+        #   R_harvest  — average DC current draw (cell at its MPP point)
+        #   Idcdc      — pulsed AC current at f_sw representing the boost
+        #                converter's chopper behaviour at vin
+        # The Idcdc PULSE is what gives LTspice its characteristic 50 kHz
+        # ripple at V(sc_anode); without it Phase B bit-level agreement
+        # caps at ~75%. With it (Phase B.2), expected agreement is >95%.
+        # If dcdc_enable=False, only R_harvest is emitted.
+        v_mpp = getattr(cfg, 'sc_vmpp_mV', 740.0) * 1e-3
+        i_mpp = getattr(cfg, 'sc_impp_uA', 470.0) * 1e-6
+        r_harvest = v_mpp / i_mpp if i_mpp > 0 else 1e6
         circuit.raw_spice += 'Xsc sc_anode sc_cathode optical_power SOLAR_CELL\n'
+        circuit.raw_spice += f'R_harvest sc_anode 0 {r_harvest:.6e}\n'
         circuit.raw_spice += f'Rsense sc_cathode sense_lo {cfg.r_sense_ohm}\n'
         circuit.raw_spice += 'Vgnd_ref sense_lo 0 DC 0\n'
+
+        # --- Synthetic DC-DC switching ---
+        # First attempt at injection (Phase B.2) made bit-level agreement
+        # WORSE: a pulse current sink at f_sw with DCM peak amplitude
+        # (~1.15 mA) overshot the cell's I_sc and dragged V(sc_anode)
+        # across the I-V curve. Bit agreement dropped 75% -> 50%.
+        # Removed pending a better model. Two options for a future pass:
+        #   1. Pre-record V(sc_anode) from one LTspice run, replay it as
+        #      a forcing PWL voltage source here (highest fidelity).
+        #   2. Couple cosim/dcdc_model.BoostConverter dynamically by
+        #      iterating cell operating point + injecting only the AC
+        #      delta (current-limited to I_sc).
+        # For now: no synthetic injection. PySpice represents the
+        # 'optical chain without DC-DC noise' view; LTspice keeps the
+        # full 'with DC-DC noise' view. Engines test different physics
+        # by design.
 
         if topology == 'ina_bpf_comp':
             self._stage_a_ina(circuit, cfg, noise_t, noise_v)

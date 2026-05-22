@@ -19,8 +19,11 @@ from cosim.pipeline import SimulationPipeline
 def main() -> int:
     cfg = SystemConfig.from_preset('kadirvelu2021')
     cfg.engine_compare = True
-    cfg.n_bits = 64                 # short run for the smoke
-    cfg.t_stop_s = 1e-3
+    cfg.n_bits = 200
+    # 50 ms @ 2 kbps = 100 bits. Statistically meaningful agreement
+    # number (~10% confidence interval on the percentage). LTspice
+    # subprocess timeout is now 600 s via cfg.ltspice_timeout_s.
+    cfg.t_stop_s = 50e-3
     if cfg.rx_topology == 'auto':
         cfg.rx_topology = 'ina_bpf_comp'
 
