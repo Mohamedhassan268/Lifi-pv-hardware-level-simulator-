@@ -134,9 +134,13 @@ class RXConfig:
     # Phase 2: Enhanced Python Engine
     pv_ode_enable: bool = False
     pv_dark_current_A: float = 1e-10
+    pv_dark_current_ref_T_K: float = 300.0
+    dark_current_doubling_dT_K: float = 10.0  # Si=10K, GaAs~7K
     pv_ideality_factor: float = 1.5
     pv_vbi_V: float = 1.1
     pv_series_resistance_ohm: float = 2.5
+    sc_responsivity_ref_T_K: float = 300.0
+    sc_responsivity_tempco_per_K: float = 4e-4  # Si=4e-4, GaAs=6e-4
 
     dcdc_rds_on_mohm: float = 52.0
     dcdc_diode_vf_V: float = 0.3
@@ -165,6 +169,14 @@ class NoiseConfig:
     adc_bits: int = 12
     adc_vref: float = 3.3
 
+    # Real-world non-AWGN sources (deterministic mains flicker + amplifier 1/f).
+    # These are NOT in the original 6-source AWGN model — they sit on top.
+    enable_mains_flicker: bool = True
+    mains_flicker_freq_hz: float = 100.0   # 100 for 50-Hz mains (EU/MEA), 120 for US/JP
+    mains_flicker_depth: float = 0.05      # fraction of I_ambient at the fundamental
+    enable_amp_flicker: bool = True
+    amp_flicker_corner_hz: float = 100.0   # TL072 ~100, INA322 ~10, OPA827 ~3
+
     # Legacy aliases (backward compat with old presets)
     shot_noise_enable: bool = True
     thermal_noise_enable: bool = True
@@ -177,9 +189,28 @@ class SimConfig:
     data_rate_bps: float = 5000.0
     modulation: str = 'OOK'
     prbs_order: int = 7
-    n_bits: int = 100
+    # Bumped from 100 → 10000 so the measurable BER floor is ~1e-4 instead
+    # of ~1e-2 without making typical runs unbearably slow. The paper
+    # validation harnesses (papers/*.py) override this where they need to
+    # reproduce the original publication's bit count.
+    n_bits: int = 10000
     simulation_engine: str = 'spice'
     random_seed: Optional[int] = None
+
+    # Glass-box observability (Phase 8). capture_probes accepts either the
+    # literal string "all", a list of probe IDs (see cosim.probes), or None
+    # to skip capture entirely. execution_mode controls the WebSocket runner:
+    # 'continuous' (run all blocks straight through, today's behaviour) or
+    # 'stepwise' (pause after each block, wait for {"type":"step"} from the
+    # client before continuing).
+    capture_probes: Optional[object] = None        # None | "all" | list[str]
+    execution_mode: str = 'continuous'             # 'continuous' | 'stepwise'
+
+    # Scientific-grade SNR measurement (two-run technique — see cosim/snr.py).
+    # When True the pipeline runs a noise-disabled reference pass after the
+    # main run and reports measured SNR at the demodulator input alongside
+    # the closed-form link-budget number. Doubles per-run cost; opt-in.
+    measure_snr_enable: bool = False
 
 
 @dataclass
@@ -367,6 +398,21 @@ class SystemConfig:
             errors.append(
                 f"ambient_illuminance_lux must be >= 0, got {self.noise.ambient_illuminance_lux}"
             )
+
+        # Statistical-resolution soft guard. Don't error out — papers
+        # legitimately use small n_bits for fast smoke runs — but warn so
+        # users don't mistake a too-small sample for a clean signal.
+        target_ber = self.validation.target_ber or 0.0
+        if target_ber > 0:
+            import math as _math
+            min_bits = int(_math.ceil(10.0 / target_ber))
+            if self.sim.n_bits < min_bits:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "n_bits=%d is too small to resolve target_ber=%.0e — "
+                    "need ≥ %d bits (~10 errors expected). BER may read 0 by chance.",
+                    self.sim.n_bits, target_ber, min_bits,
+                )
 
         # Physical quantities must be non-negative
         for field_name in ('sc_area_cm2', 'sc_responsivity', 'sc_cj_nF',

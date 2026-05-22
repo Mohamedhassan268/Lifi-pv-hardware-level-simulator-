@@ -44,6 +44,7 @@ from .raw_parser import LTSpiceRawParser
 from .spice_finder import spice_available
 from .channel import OpticalChannel
 from .modulation import modulate, demodulate, calculate_ber
+from .probes import ProbeCapture
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,9 @@ class SimulationPipeline:
 
     def __init__(self, config: SystemConfig, session_dir: Path,
                  ltspice_runner: Optional[LTSpiceRunner] = None,
-                 on_progress: Optional[Callable] = None):
+                 on_progress: Optional[Callable] = None,
+                 probes: Optional[ProbeCapture] = None,
+                 stage_hook: Optional[Callable] = None):
         """
         Initialize pipeline.
 
@@ -79,11 +82,18 @@ class SimulationPipeline:
             session_dir: Session directory (with netlists/, pwl/, raw/ subdirs)
             ltspice_runner: LTSpice runner (auto-created if None)
             on_progress: Optional callback(step_name, status, message)
+            probes: Optional ProbeCapture; when provided, intermediate signals
+                at every block boundary are captured for glass-box observability.
+            stage_hook: Optional callable(stage_name); invoked after each block
+                (TX, Channel, RX) completes. Used by the WebSocket runner to
+                implement cooperative pause/resume between blocks.
         """
         self.config = config
         self.session_dir = Path(session_dir)
         self.ltspice = ltspice_runner or LTSpiceRunner()
         self.on_progress = on_progress
+        self.probes = probes
+        self.stage_hook = stage_hook
 
         # Step results
         self.step_tx = StepResult('TX')
@@ -425,7 +435,9 @@ class SimulationPipeline:
         self._notify('TX', 'running', f'Python engine: {cfg.modulation} modulation...')
 
         try:
-            result = run_python_simulation(cfg)
+            result = run_python_simulation(
+                cfg, probes=self.probes, stage_hook=self.stage_hook,
+            )
 
             # TX done
             self.step_tx.status = 'done'
