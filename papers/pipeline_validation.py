@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 
 from cosim.system_config import SystemConfig
 from cosim.python_engine import run_python_simulation
+from cosim.ber_sweep import wilson_ci
 
 
 # =============================================================================
@@ -40,6 +41,11 @@ _PAPER_METRICS = {
             # real-world losses not present in an ideal first-principles
             # model; per CLAUDE.md we validate against physics, not fits.
             'channel_gain': 0.0773,
+            # TODO(verify): pipeline P_rx/I_ph run ~16% above target while
+            # channel_gain matches to 0.1%. Discrepancy is downstream of
+            # propagation — suspect P_tx unit mismatch in preset vs the
+            # paper's 9.3 mW, or a responsivity-tempco interaction since
+            # the 351e7f1 commit added temperature-dependent R(T).
             'P_rx_uW': 718.9,
             'I_ph_uA': 328.5,
             'BER': 1.008e-3,
@@ -72,6 +78,12 @@ _PAPER_METRICS = {
         'metrics': ['BER', 'data_rate_mbps'],
         'expected': {
             'BER': 3.4e-3,
+            # TODO(verify): pipeline reports ~25.5 Mbps vs target 21.3
+            # (~19.5% high). The comparator already applies CP overhead
+            # (nfft / (nfft + cp_len)) but the paper's 21.3 may also
+            # subtract pilot subcarriers / frame headers. Confirm against
+            # papers/oliveira_2024.py and add overhead modelling here if
+            # the gap is real (vs an n_subcarriers vs n_data_carriers mix-up).
             'data_rate_mbps': 21.3,
         },
     },
@@ -123,10 +135,15 @@ def validate_preset(preset_name, verbose=True):
         'data_rate_mbps': payload_rate_bps / 1e6,
     }
 
+    # n_bits actually tested — needed for Wilson-CI gating of BER=0 claims.
+    n_bits_tested = int(result.get('n_bits_tested', cfg.n_bits) or 0)
+    n_errors = int(result.get('ber_n_errors', result.get('n_errors', 0)) or 0)
+
     # Compare against expected
     expected = paper.get('expected', {})
     comparisons = []
     all_pass = True
+    extra_notes = {}  # metric -> str, surfaces e.g. Wilson upper bound
 
     for metric_name in paper.get('metrics', ['BER']):
         got = pipeline_metrics.get(metric_name)
@@ -137,20 +154,35 @@ def validate_preset(preset_name, verbose=True):
             status = 'INFO'
             error_pct = None
         elif metric_name == 'BER':
-            # BER comparison: check order of magnitude
+            # BER comparison: gated on whether n_bits is enough to
+            # statistically reject the target.
             if got == 0 and exp == 0:
                 status = 'PASS'
                 error_pct = 0
             elif got == 0:
-                status = 'PASS'  # Got perfect, target was nonzero
-                error_pct = -100
+                # Zero errors observed — claim "BER < target" only if the
+                # Wilson 95% upper bound at this n_bits is itself below
+                # the target. Otherwise we lack resolution.
+                _, ub = wilson_ci(0, n_bits_tested)
+                extra_notes[metric_name] = (
+                    f"BER < {ub:.2e} (95% CI, n={n_bits_tested})")
+                if ub < exp:
+                    status = 'PASS'
+                    error_pct = -100
+                else:
+                    status = 'INSUFFICIENT_BITS'
+                    error_pct = None
+                    all_pass = False
             elif exp == 0:
                 status = 'FAIL' if got > 0.01 else 'PASS'
                 error_pct = float('inf')
             else:
                 ratio = got / exp
-                # BER within 1 order of magnitude = PASS
-                status = 'PASS' if 0.1 <= ratio <= 10 else 'REVIEW'
+                # BER must be within a factor of 2 of target.
+                # (Wider than the 20% numeric tolerance because BER is
+                # log-scale and noisy, but tighter than the previous
+                # 0.1<=r<=10 which accepted 10x-worse-than-target.)
+                status = 'PASS' if 0.5 <= ratio <= 2.0 else 'REVIEW'
                 error_pct = abs(ratio - 1) * 100
                 if status == 'REVIEW':
                     all_pass = False
@@ -174,8 +206,10 @@ def validate_preset(preset_name, verbose=True):
             exp_str = f"{exp:.4e}" if exp is not None else "N/A"
             got_str = f"{got:.4e}" if got is not None else "N/A"
             err_str = f"{error_pct:.1f}%" if error_pct is not None else ""
+            note = extra_notes.get(metric_name, '')
+            note_str = f"  [{note}]" if note else ''
             print(f"    {metric_name:20s}  pipeline={got_str:>12s}  "
-                  f"target={exp_str:>12s}  {err_str:>8s}  {status}")
+                  f"target={exp_str:>12s}  {err_str:>8s}  {status}{note_str}")
 
     return {
         'preset': preset_name,
@@ -389,7 +423,12 @@ def _plot_per_paper_details(results, output_dir):
 
         # Color-code by status
         for i, st in enumerate(statuses):
-            color = '#2ca02c' if st == 'PASS' else '#d62728' if st in ('FAIL', 'REVIEW') else '#999999'
+            if st == 'PASS':
+                color = '#2ca02c'
+            elif st in ('FAIL', 'REVIEW', 'INSUFFICIENT_BITS'):
+                color = '#d62728'
+            else:
+                color = '#999999'
             bars_p[i].set_edgecolor(color)
             bars_p[i].set_linewidth(2)
 
@@ -431,6 +470,7 @@ def _plot_radar_summary(results, output_dir):
             elif c['status'] == 'INFO':
                 sc.append(0.5)
             else:
+                # REVIEW, FAIL, INSUFFICIENT_BITS all score 0
                 sc.append(0.0)
         scores.append(np.mean(sc))
 

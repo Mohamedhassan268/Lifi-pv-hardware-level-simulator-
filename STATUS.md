@@ -535,9 +535,25 @@ refactor work).
    needs an Authenticode certificate (~$200-400/yr from DigiCert, Sectigo,
    etc.) and the `windows.certificateThumbprint` / `timestampUrl` fields
    filled in `frontend\src-tauri\tauri.conf.json`.
-3. **5 failing pipeline validations** — flagged in CLAUDE.md memory as the
-   next refactor target after this UI migration lands. Not blocked by
-   anything in Phase 6/7.
+3. **Pipeline validation comparator hardened (2026-05-22).** After commit
+   `351e7f1` (tempco responsivity + flicker noise), all 7 presets observe
+   BER = 0, which previously read as 7/7 PASS regardless of statistical
+   resolution. `papers/pipeline_validation.py` now applies a Wilson 95%
+   upper-bound test on the n_bits actually used: presets with insufficient
+   bits to reject their target BER are reported as `INSUFFICIENT_BITS`
+   instead of PASS, and the within-magnitude tolerance for non-zero
+   BER comparisons was tightened from `0.1 <= ratio <= 10` (one decade)
+   to `0.5 <= ratio <= 2.0` (a factor of 2). Current state: **5/7 PASS**:
+   - PASS: Correa 2025, González 2024, Oliveira 2024, Sarwar 2017,
+     lifi_poc_breadboard
+   - REVIEW (INSUFFICIENT_BITS on BER row): Kadirvelu 2021 (n_bits=100,
+     Wilson UB ≈ 3.7e-2 > target 1e-3), Xu 2024 (n_bits=20, Wilson UB
+     ≈ 0.16 > target 0.10)
+   Two flagged follow-ups (TODO(verify) comments inline in
+   `_PAPER_METRICS`): Kadirvelu P_rx/I_ph ~16% above target despite
+   channel_gain matching to 0.1% (suspect P_tx unit issue or responsivity-
+   tempco interaction); Oliveira data_rate ~19.5% above target (suspected
+   unmodelled OFDM overhead beyond cyclic prefix — pilots, headers).
 4. **SPICE-via-sidecar** — the bundled `lifi-backend.exe` does not include
    LTspice or ngspice. The pipeline auto-falls back to Python; full SPICE
    simulation requires the user to have LTspice or ngspice installed

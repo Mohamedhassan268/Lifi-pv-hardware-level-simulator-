@@ -673,3 +673,56 @@ class TestNewComponents:
             # get_component normalizes names via upper + underscore
             inst = get_component(name)
             assert inst is not None
+
+
+# ============================================================================
+# 13. Pipeline-validation comparator (BER=0 + Wilson-CI gating)
+# ============================================================================
+
+class TestComparatorBerWilson:
+    """
+    The comparator at papers/pipeline_validation.py must only claim
+    "BER below target" when n_bits is large enough for the Wilson 95%
+    upper bound to fall below the target.
+    """
+
+    @staticmethod
+    def _stub_result(ber, n_bits, n_errors=0):
+        """Build a result dict shaped like run_python_simulation's output."""
+        return {
+            'ber': ber,
+            'n_bits_tested': n_bits,
+            'ber_n_errors': n_errors,
+            'channel_gain': 0.0773,
+            'P_rx_avg_uW': 718.9,
+            'I_ph_avg_uA': 328.5,
+            'snr_est_dB': 30.0,
+        }
+
+    def test_ber_zero_with_sufficient_bits_passes(self, monkeypatch):
+        """n=10000 errors=0 vs target 1e-2 -> Wilson UB << target -> PASS."""
+        import papers.pipeline_validation as pv
+
+        monkeypatch.setattr(
+            pv, 'run_python_simulation',
+            lambda cfg: self._stub_result(ber=0.0, n_bits=10000))
+
+        # Correa target is 0.01 — easy to reject with 10k bits.
+        result = pv.validate_preset('correa2025', verbose=False)
+        ber_comp = next(c for c in result['comparisons'] if c['metric'] == 'BER')
+        assert ber_comp['status'] == 'PASS'
+        assert result['passed'] is True
+
+    def test_ber_zero_with_insufficient_bits_flagged(self, monkeypatch):
+        """n=20 errors=0 vs target 1e-3 -> Wilson UB >> target -> INSUFFICIENT_BITS."""
+        import papers.pipeline_validation as pv
+
+        monkeypatch.setattr(
+            pv, 'run_python_simulation',
+            lambda cfg: self._stub_result(ber=0.0, n_bits=20))
+
+        # Kadirvelu target is ~1e-3 — cannot be rejected from only 20 bits.
+        result = pv.validate_preset('kadirvelu2021', verbose=False)
+        ber_comp = next(c for c in result['comparisons'] if c['metric'] == 'BER')
+        assert ber_comp['status'] == 'INSUFFICIENT_BITS'
+        assert result['passed'] is False
