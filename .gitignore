@@ -54,3 +54,12 @@ kxob25_receiver.cir
 # Debug artifacts from spike / scratch scripts (leading underscore)
 # Includes _dual_run_session/, _dump_*.cir, _min_*.cir, _spike_log.txt
 scripts/_*
+
+# Build outputs
+/dist/
+/build/
+frontend/src-tauri/target/
+frontend/src-tauri/binaries/
+session_summary.txt
+smoke-stdout.log
+smoke-stderr.log

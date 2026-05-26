@@ -28,6 +28,34 @@ K_BOLTZMANN = 1.380649e-23       # Boltzmann constant (J/K)
 
 
 # =============================================================================
+# PINK NOISE GENERATOR — Paul Kellet "economy" 1/f filter
+# =============================================================================
+
+def _pink_voss(n: int, rng: np.random.Generator) -> np.ndarray:
+    """Generate `n` samples of approximately-1/f (pink) noise.
+
+    6-pole IIR over white gaussian input, after Paul Kellet's "economy"
+    method. Output is approximately 1/f over ~4 decades — adequate for
+    audio-band amplifier flicker simulation. Amplitude is not normalized
+    here; callers should renormalize to their target sigma.
+    """
+    white = rng.standard_normal(n)
+    b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0.0
+    out = np.empty(n, dtype=np.float64)
+    for i in range(n):
+        x = float(white[i])
+        b0 = 0.99886 * b0 + x * 0.0555179
+        b1 = 0.99332 * b1 + x * 0.0750759
+        b2 = 0.96900 * b2 + x * 0.1538520
+        b3 = 0.86650 * b3 + x * 0.3104856
+        b4 = 0.55000 * b4 + x * 0.5329522
+        b5 = -0.7616 * b5 - x * 0.0168980
+        out[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + x * 0.5362
+        b6 = x * 0.115926
+    return out
+
+
+# =============================================================================
 # NOISE BREAKDOWN RESULT
 # =============================================================================
 
@@ -101,7 +129,13 @@ class NoiseModel:
                  enable_ambient: bool = True,
                  enable_amplifier: bool = True,
                  enable_adc: bool = False,
-                 enable_processing: bool = False):
+                 enable_processing: bool = False,
+                 # Real-world non-AWGN sources (mains flicker + amp 1/f)
+                 enable_mains_flicker: bool = False,
+                 mains_flicker_freq_hz: float = 100.0,
+                 mains_flicker_depth: float = 0.05,
+                 enable_amp_flicker: bool = False,
+                 amp_flicker_corner_hz: float = 100.0):
         """
         Args:
             temperature_K: Ambient temperature (Kelvin)
@@ -140,6 +174,12 @@ class NoiseModel:
         self.enable_adc = enable_adc
         self.enable_processing = enable_processing
 
+        self.enable_mains_flicker = enable_mains_flicker
+        self.mains_flicker_freq_hz = mains_flicker_freq_hz
+        self.mains_flicker_depth = mains_flicker_depth
+        self.enable_amp_flicker = enable_amp_flicker
+        self.amp_flicker_corner_hz = amp_flicker_corner_hz
+
     @classmethod
     def from_config(cls, config) -> 'NoiseModel':
         """Create NoiseModel from a SystemConfig instance."""
@@ -164,6 +204,11 @@ class NoiseModel:
             enable_amplifier=config.noise_amplifier_enable,
             enable_adc=config.noise_adc_enable,
             enable_processing=config.noise_processing_enable,
+            enable_mains_flicker=getattr(config, 'enable_mains_flicker', False),
+            mains_flicker_freq_hz=getattr(config, 'mains_flicker_freq_hz', 100.0),
+            mains_flicker_depth=getattr(config, 'mains_flicker_depth', 0.05),
+            enable_amp_flicker=getattr(config, 'enable_amp_flicker', False),
+            amp_flicker_corner_hz=getattr(config, 'amp_flicker_corner_hz', 100.0),
         )
 
     # -------------------------------------------------------------------------
@@ -325,6 +370,181 @@ class NoiseModel:
         if rng is None:
             return np.random.normal(0, sigma, n_samples)
         return rng.normal(0, sigma, n_samples)
+
+    def generate_per_source_time_domain(
+        self, n_samples: int, I_ph, bandwidth: float,
+        rng: Optional[np.random.Generator] = None,
+    ) -> dict:
+        """
+        Generate independent AWGN samples for each enabled noise source.
+
+        Each source draws from its own variance (computed via compute_noise)
+        with statistically independent samples. Used by glass-box observability
+        so the UI can display per-source contributions; the summed `total`
+        array is what gets added to I_ph for the actual simulation.
+
+        Returns a dict with keys 'shot', 'thermal', 'ambient', 'amplifier',
+        'adc', 'processing', 'total' — each a length-n_samples np.ndarray
+        in Amperes. Disabled sources return all-zeros.
+        """
+        if rng is None:
+            rng = np.random.default_rng()
+
+        I_avg = (
+            float(np.mean(np.abs(I_ph))) if hasattr(I_ph, "__len__") else float(abs(I_ph))
+        )
+        breakdown = self.compute_noise(I_avg, bandwidth)
+
+        def _draw(variance: float) -> np.ndarray:
+            if variance <= 0:
+                return np.zeros(n_samples)
+            return rng.normal(0.0, float(np.sqrt(variance)), n_samples)
+
+        contributions = {
+            "shot": _draw(breakdown.shot),
+            "thermal": _draw(breakdown.thermal),
+            "ambient": _draw(breakdown.ambient),
+            "amplifier": _draw(breakdown.amplifier),
+            "adc": _draw(breakdown.adc),
+            "processing": _draw(breakdown.processing),
+        }
+        contributions["total"] = sum(contributions.values())
+        return contributions
+
+    # -------------------------------------------------------------------------
+    # Non-AWGN real-world sources: mains flicker + amplifier 1/f
+    # -------------------------------------------------------------------------
+
+    def mains_flicker_current(
+        self, t: np.ndarray,
+        I_ambient: Optional[float] = None,
+        rng: Optional[np.random.Generator] = None,
+    ) -> np.ndarray:
+        """
+        Deterministic AC-mains-flicker interferer (in Amperes).
+
+        Indoor lighting driven by AC mains rectification flickers at 2x the
+        mains frequency (100 Hz for 50 Hz mains, 120 Hz for 60 Hz). Modeled
+        as a fraction of the DC ambient photocurrent, with two decreasing
+        harmonics that approximate fluorescent / LED ballast spectra:
+
+            i_fl(t) = depth * I_ambient * Σ_k a_k * cos(2π * k * f * t + φ_k)
+            a_1 = 1.0,  a_2 = 0.30,  a_3 = 0.10
+
+        Phases are random per run; pass a seeded rng for repeatability.
+        Returns zeros if the source or I_ambient is off.
+        """
+        if not self.enable_mains_flicker:
+            return np.zeros_like(np.asarray(t), dtype=np.float64)
+        if rng is None:
+            rng = np.random.default_rng()
+
+        if I_ambient is None:
+            P_amb = self.ambient_lux * 1.46e-6 * self.rx_area_cm2
+            I_ambient = self.responsivity * P_amb
+
+        f = float(self.mains_flicker_freq_hz)
+        depth = float(self.mains_flicker_depth)
+        t_arr = np.asarray(t, dtype=np.float64)
+        if I_ambient <= 0 or depth <= 0 or f <= 0:
+            return np.zeros_like(t_arr, dtype=np.float64)
+
+        phi_1 = 2 * np.pi * rng.random()
+        phi_2 = 2 * np.pi * rng.random()
+        phi_3 = 2 * np.pi * rng.random()
+        omega = 2 * np.pi * f * t_arr
+        sig = (
+            1.00 * np.cos(omega + phi_1) +
+            0.30 * np.cos(2 * omega + phi_2) +
+            0.10 * np.cos(3 * omega + phi_3)
+        )
+        return (depth * float(I_ambient)) * sig
+
+    def mains_flicker_variance(self) -> float:
+        """
+        Analytical variance of the mains-flicker current (A²).
+
+        i_fl(t) = depth · I_amb · Σ_k a_k · cos(2π k f t + φ_k)
+        With a_1 = 1.0, a_2 = 0.30, a_3 = 0.10 (decorrelated harmonics by
+        random phases), the mean-square value is
+
+            Var[i_fl] = (depth · I_amb)² · Σ_k (a_k² / 2)
+                      = (depth · I_amb)² · (1² + 0.30² + 0.10²) / 2
+                      = (depth · I_amb)² · 0.55
+
+        Returns 0 if the source is disabled, the ambient illuminance is zero,
+        or the depth is zero.
+        """
+        if not self.enable_mains_flicker:
+            return 0.0
+        if self.ambient_lux <= 0 or self.mains_flicker_depth <= 0:
+            return 0.0
+        P_amb = self.ambient_lux * 1.46e-6 * self.rx_area_cm2
+        I_amb = self.responsivity * P_amb
+        if I_amb <= 0:
+            return 0.0
+        # 1.0² + 0.30² + 0.10² = 1.10, then /2 → 0.55
+        return float((self.mains_flicker_depth * I_amb) ** 2 * 0.55)
+
+    def amp_flicker_variance(self, t_total_s: float, bandwidth_hz: float) -> float:
+        """
+        Analytical variance of the amplifier 1/f noise (A²), input-referred.
+
+        From the wideband-PSD model e_n(f) = e_n_white · √(1 + f_c/f),
+        the excess variance from the 1/f shape integrated from f_low = 1/T
+        to the noise bandwidth B_n is
+
+            σ²_pink_V = e_n_white² · f_c · ln(B_n / f_low)
+
+        Divided by R_load² to refer it back to the current domain.
+        """
+        if not self.enable_amp_flicker:
+            return 0.0
+        f_low = max(1.0 / t_total_s, 0.1) if t_total_s > 0 else 0.1
+        f_c = float(self.amp_flicker_corner_hz)
+        if bandwidth_hz <= f_low or f_c <= 0:
+            return 0.0
+        sigma_v_sq = (self.e_n ** 2) * f_c * np.log(bandwidth_hz / f_low)
+        return float(sigma_v_sq / max(self.R_load, 1e-6) ** 2)
+
+    def amp_flicker_current(
+        self, n_samples: int, dt: float,
+        rng: Optional[np.random.Generator] = None,
+    ) -> np.ndarray:
+        """
+        Amplifier 1/f (pink) noise referred to the photocurrent domain (A).
+
+        Voltage-noise density rises below the flicker corner f_c as
+            e_n(f) = e_n_white * sqrt(1 + f_c/f)
+        which when integrated from f_low (set by run length 1/T_total) up to
+        the Nyquist bandwidth gives an excess variance:
+            σ²_pink_V = e_n_white² * f_c * ln(B_n / f_low)
+        Dividing by R_load² yields the equivalent input-referred current
+        variance the time-domain samples are normalized to.
+
+        Time-domain shaping uses Paul Kellet's economy 6-pole IIR over white
+        noise (see `_pink_voss`).
+        """
+        if not self.enable_amp_flicker or n_samples <= 0:
+            return np.zeros(max(n_samples, 0), dtype=np.float64)
+        if rng is None:
+            rng = np.random.default_rng()
+
+        T_total = n_samples * dt
+        f_low = max(1.0 / T_total, 0.1) if T_total > 0 else 0.1
+        bandwidth = 0.5 / dt if dt > 0 else 1.0
+        f_c = float(self.amp_flicker_corner_hz)
+        if bandwidth <= f_low or f_c <= 0:
+            return np.zeros(n_samples, dtype=np.float64)
+
+        sigma_v = self.e_n * np.sqrt(f_c * np.log(bandwidth / f_low))
+        sigma_i = sigma_v / max(self.R_load, 1e-6)
+
+        pink = _pink_voss(n_samples, rng)
+        std = float(np.std(pink))
+        if std > 0:
+            pink = pink * (sigma_i / std)
+        return pink.astype(np.float64, copy=False)
 
     # -------------------------------------------------------------------------
     # SPICE noise source generation

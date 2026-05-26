@@ -65,6 +65,13 @@ class SchematicsTab(QWidget):
         self._btn_export.clicked.connect(self._export)
         self._btn_export.setEnabled(False)
         ctrl.addWidget(self._btn_export)
+
+        self._btn_kicad = QPushButton('Export KiCad\u2026')
+        self._btn_kicad.setToolTip(
+            'Export this paper as a KiCad schematic (.kicad_sch) + BOM (CSV)')
+        self._btn_kicad.clicked.connect(self._export_kicad)
+        ctrl.addWidget(self._btn_kicad)
+
         ctrl.addStretch()
         main.addLayout(ctrl)
 
@@ -183,6 +190,50 @@ class SchematicsTab(QWidget):
                                 f'schemdraw not available: {e}')
         except Exception as e:
             QMessageBox.warning(self, 'Schematic Error', str(e))
+
+    def _export_kicad(self):
+        """Export current paper as .kicad_sch + BOM."""
+        paper_key = self._paper_combo.currentData()
+        if not paper_key:
+            return
+
+        try:
+            from kicad import export_kicad
+            from kicad.kicad_exporter import available_presets
+        except ImportError as exc:
+            QMessageBox.warning(self, 'KiCad Export', f'KiCad module not available: {exc}')
+            return
+
+        if paper_key not in available_presets():
+            QMessageBox.information(
+                self, 'KiCad Export',
+                f"No KiCad graph builder for '{paper_key}' yet.\n"
+                f"Available: {', '.join(available_presets()) or '(none)'}")
+            return
+
+        out_dir = QFileDialog.getExistingDirectory(
+            self, 'Choose output folder for KiCad files')
+        if not out_dir:
+            return
+
+        try:
+            from pathlib import Path
+            result = export_kicad(paper_key, Path(out_dir))
+        except Exception as exc:
+            QMessageBox.warning(self, 'KiCad Export Failed', str(exc))
+            return
+
+        msg = (
+            f"Wrote:\n"
+            f"  {result.schematic_path}\n"
+            f"  {result.bom_path}\n\n"
+            f"{result.component_count} components, {result.net_count} nets."
+        )
+        if result.warnings:
+            msg += "\n\nWarnings:\n  " + "\n  ".join(result.warnings[:10])
+            if len(result.warnings) > 10:
+                msg += f"\n  ... and {len(result.warnings) - 10} more"
+        QMessageBox.information(self, 'KiCad Export Complete', msg)
 
     def _export(self):
         if not self._current_pixmap:

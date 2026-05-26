@@ -405,3 +405,271 @@ class TestDualEngine:
         tx = pipe.run_step_tx()
         assert tx.status == 'done'
         assert 'P_tx_pwl' in tx.outputs
+
+
+# ============================================================================
+# 10. Thermal Modelling (Phase 6C)
+# ============================================================================
+
+class TestThermalModel:
+    """Temperature-dependent dark current and responsivity."""
+
+    def test_dark_current_ref_zero_returns_zero(self):
+        from cosim.noise import NoiseModel
+        nm = NoiseModel(temperature_K=320.0, dark_current_ref_A=0.0)
+        assert nm.dark_current_at_T() == 0.0
+
+    def test_dark_current_doubles_per_10K(self):
+        from cosim.noise import NoiseModel
+        I0 = 1e-10
+        nm_ref = NoiseModel(temperature_K=300.0, dark_current_ref_A=I0,
+                            dark_current_ref_T_K=300.0)
+        nm_hot = NoiseModel(temperature_K=310.0, dark_current_ref_A=I0,
+                            dark_current_ref_T_K=300.0)
+        assert nm_ref.dark_current_at_T() == pytest.approx(I0, rel=1e-6)
+        assert nm_hot.dark_current_at_T() == pytest.approx(2 * I0, rel=1e-6)
+
+    def test_dark_current_50K_gives_32x(self):
+        from cosim.noise import NoiseModel
+        I0 = 1e-10
+        nm = NoiseModel(temperature_K=350.0, dark_current_ref_A=I0,
+                        dark_current_ref_T_K=300.0)
+        # 50 K / 10 K per doubling = 2^5 = 32x
+        assert nm.dark_current_at_T() == pytest.approx(32 * I0, rel=1e-6)
+
+    def test_dark_current_cold_decreases(self):
+        """Below reference temperature, dark current shrinks."""
+        from cosim.noise import NoiseModel
+        I0 = 1e-10
+        nm_cold = NoiseModel(temperature_K=290.0, dark_current_ref_A=I0,
+                             dark_current_ref_T_K=300.0)
+        # -10 K => 0.5 x
+        assert nm_cold.dark_current_at_T() == pytest.approx(0.5 * I0, rel=1e-6)
+
+    def test_responsivity_tempco_increases_with_T(self):
+        """Si/GaAs responsivity has positive tempco (~4e-4/K)."""
+        from cosim.python_engine import PVReceiver
+        rx_cold = PVReceiver(responsivity=0.5, temperature_K=300.0,
+                             responsivity_ref_T_K=300.0,
+                             responsivity_tempco_per_K=4e-4)
+        rx_hot = PVReceiver(responsivity=0.5, temperature_K=350.0,
+                            responsivity_ref_T_K=300.0,
+                            responsivity_tempco_per_K=4e-4)
+        # Delta T = 50 K, tempco = 4e-4/K => +2% => 0.510
+        assert rx_cold.R == pytest.approx(0.5, rel=1e-6)
+        assert rx_hot.R == pytest.approx(0.5 * (1 + 4e-4 * 50), rel=1e-6)
+
+    def test_responsivity_zero_tempco_invariant(self):
+        from cosim.python_engine import PVReceiver
+        rx = PVReceiver(responsivity=0.5, temperature_K=400.0,
+                        responsivity_ref_T_K=300.0,
+                        responsivity_tempco_per_K=0.0)
+        assert rx.R == pytest.approx(0.5, rel=1e-6)
+
+    def test_thermal_sweep_runs(self, tmp_path):
+        """run_thermal_sweep returns one ThermalPoint per temperature."""
+        from cosim.thermal_sweep import run_thermal_sweep, ThermalPoint
+        temps = [25.0, 65.0]
+        points = run_thermal_sweep('kadirvelu2021', temps,
+                                   output_dir=str(tmp_path), verbose=False)
+        assert len(points) == 2
+        assert all(isinstance(p, ThermalPoint) for p in points)
+        # Hot point should have higher dark current
+        assert points[1].dark_current_A > points[0].dark_current_A
+        # Responsivity should be > 0 at both temperatures
+        assert points[0].responsivity_A_per_W > 0
+        assert points[1].responsivity_A_per_W > 0
+
+    def test_thermal_config_fields_default(self):
+        """SystemConfig exposes thermal configuration fields."""
+        from cosim.system_config import SystemConfig
+        cfg = SystemConfig()
+        assert cfg.pv_dark_current_ref_T_K == 300.0
+        assert cfg.dark_current_doubling_dT_K == 10.0
+        assert cfg.sc_responsivity_ref_T_K == 300.0
+        assert cfg.sc_responsivity_tempco_per_K > 0
+
+
+# ============================================================================
+# 11. Monte Carlo Tolerance Analysis (Phase 6C)
+# ============================================================================
+
+class TestMonteCarlo:
+    """Production yield estimation via Monte Carlo tolerance sweep."""
+
+    def test_zero_tolerance_is_deterministic(self):
+        """With tol=0, every run should produce the same BER."""
+        from cosim.monte_carlo import run_monte_carlo
+        spec = {'sc_responsivity': 0.0, 'distance_m': 0.0}
+        r = run_monte_carlo('kadirvelu2021', spec, n_runs=5,
+                            seed=1, verbose=False)
+        assert len(r.ber_samples) == 5
+        assert len(set(r.ber_samples)) == 1, \
+            "Zero tolerance should yield identical BER across runs"
+
+    def test_nonzero_tolerance_produces_variation(self):
+        """With a wide tolerance, SNR should vary across runs."""
+        from cosim.monte_carlo import run_monte_carlo
+        spec = {'distance_m': 0.30}  # +/-30% placement error
+        r = run_monte_carlo('kadirvelu2021', spec, n_runs=20,
+                            seed=7, verbose=False)
+        snr = np.array(r.snr_samples)
+        # Spread should exceed numerical jitter
+        assert snr.std() > 0.05, \
+            f"Expected SNR spread from 30% distance tolerance, got std={snr.std()}"
+
+    def test_unknown_field_raises(self):
+        """Referencing a non-existent field should error clearly."""
+        from cosim.monte_carlo import run_monte_carlo
+        with pytest.raises(ValueError, match="unknown field"):
+            run_monte_carlo('kadirvelu2021',
+                            {'not_a_real_field': 0.1},
+                            n_runs=1, verbose=False)
+
+    def test_yield_fraction_bounds(self):
+        """Yield fraction must lie in [0, 1]."""
+        from cosim.monte_carlo import run_monte_carlo
+        spec = {'sc_responsivity': 0.05}
+        r = run_monte_carlo('kadirvelu2021', spec, n_runs=10,
+                            seed=3, verbose=False)
+        assert 0.0 <= r.yield_fraction <= 1.0
+
+    def test_reproducible_parameter_samples(self):
+        """Same seed => identical sampled parameter values.
+
+        Note: SNR/BER estimates include internal channel noise
+        randomness not tied to the MC seed, so we check the sampled
+        parameter sequence rather than downstream metrics.
+        """
+        import numpy as np
+        from cosim.monte_carlo import _sample_param
+        rng1 = np.random.default_rng(42)
+        rng2 = np.random.default_rng(42)
+        seq1 = [_sample_param(0.5, 0.1, rng1) for _ in range(10)]
+        seq2 = [_sample_param(0.5, 0.1, rng2) for _ in range(10)]
+        assert seq1 == seq2
+
+    def test_sample_stays_within_bounds(self):
+        """Sampled values must fall within +/-tol of nominal."""
+        from cosim.system_config import SystemConfig
+        from cosim.monte_carlo import _sample_param
+        import numpy as np
+        rng = np.random.default_rng(0)
+        nominal = 0.5
+        tol = 0.1
+        for _ in range(100):
+            v = _sample_param(nominal, tol, rng)
+            assert nominal * (1 - tol) <= v <= nominal * (1 + tol)
+
+    def test_figure_is_written(self, tmp_path):
+        """With output_dir set, a histogram PNG should appear."""
+        from cosim.monte_carlo import run_monte_carlo
+        spec = {'sc_responsivity': 0.05}
+        run_monte_carlo('kadirvelu2021', spec, n_runs=5,
+                        seed=1, output_dir=str(tmp_path), verbose=False)
+        assert (tmp_path / 'monte_carlo_kadirvelu2021.png').exists()
+
+
+# ============================================================================
+# 12. New Components (Phase 6C)
+# ============================================================================
+
+class TestNewComponents:
+    """OPA380 TIA, BQ25570 MPPT charger, STM32H7 ADC."""
+
+    def test_opa380_construction(self):
+        from components import OPA380
+        opa = OPA380(R_feedback=100e3, C_feedback=2.5e-12)
+        assert opa.name == 'OPA380'
+        assert opa.transimpedance_V_per_A == pytest.approx(100e3)
+        assert opa.gain_bandwidth_product == pytest.approx(90e6)
+
+    def test_opa380_bandwidth_scales_inversely_with_rf_cf(self):
+        from components import OPA380
+        opa1 = OPA380(R_feedback=100e3, C_feedback=2.5e-12)
+        opa2 = OPA380(R_feedback=200e3, C_feedback=2.5e-12)
+        # Doubling Rf halves bandwidth
+        assert opa2.tia_bandwidth_Hz == pytest.approx(opa1.tia_bandwidth_Hz / 2, rel=1e-6)
+
+    def test_opa380_spice_subcircuit(self):
+        from components import OPA380
+        opa = OPA380()
+        sub = opa.spice_subcircuit()
+        assert '.SUBCKT OPA380' in sub
+        assert '.ENDS OPA380' in sub
+
+    def test_bq25570_construction(self):
+        from components import BQ25570
+        chg = BQ25570()
+        assert chg.name == 'BQ25570'
+        assert chg.v_in_min_startup == 0.6
+        assert chg.v_in_min_operating == 0.1
+
+    def test_bq25570_cold_start_threshold(self):
+        from components import BQ25570
+        chg = BQ25570()
+        assert chg.cold_start_supported(0.8) is True
+        assert chg.cold_start_supported(0.5) is False
+
+    def test_bq25570_mppt_voltage(self):
+        from components import BQ25570
+        chg = BQ25570(mppt_ratio=0.80)
+        assert chg.mppt_voltage(1.1) == pytest.approx(0.88)
+
+    def test_bq25570_efficiency_monotonic(self):
+        """Efficiency should not decrease as V_IN rises from 0.5 to 1.0 V."""
+        from components import BQ25570
+        chg = BQ25570()
+        assert chg.boost_efficiency(0.5) <= chg.boost_efficiency(0.75)
+        assert chg.boost_efficiency(0.75) <= chg.boost_efficiency(1.0)
+
+    def test_bq25570_below_operating_returns_zero(self):
+        from components import BQ25570
+        chg = BQ25570()
+        assert chg.boost_efficiency(0.05) == 0.0
+        assert chg.output_power(1e-3, 0.05) == 0.0
+
+    def test_stm32h7_adc_resolution_validation(self):
+        from components import STM32H7_ADC
+        with pytest.raises(ValueError):
+            STM32H7_ADC(resolution_bits=11)
+        with pytest.raises(ValueError):
+            STM32H7_ADC(v_ref_V=5.0)
+        with pytest.raises(ValueError):
+            STM32H7_ADC(oversampling=2048)
+
+    def test_stm32h7_adc_lsb_matches_vref(self):
+        from components import STM32H7_ADC
+        adc = STM32H7_ADC(resolution_bits=12, v_ref_V=3.3)
+        assert adc.n_codes == 4096
+        assert adc.lsb_V == pytest.approx(3.3 / 4096)
+
+    def test_stm32h7_adc_quantization_reduced_by_oversampling(self):
+        from components import STM32H7_ADC
+        a1 = STM32H7_ADC(resolution_bits=12, v_ref_V=3.3, oversampling=1)
+        a4 = STM32H7_ADC(resolution_bits=12, v_ref_V=3.3, oversampling=4)
+        # Oversampling x4 reduces sigma by sqrt(4)
+        assert a4.quantization_noise_std_V == pytest.approx(
+            a1.quantization_noise_std_V / 2, rel=1e-6)
+
+    def test_stm32h7_adc_sample_round_trip_within_one_lsb(self):
+        from components import STM32H7_ADC
+        adc = STM32H7_ADC(resolution_bits=12, v_ref_V=3.3)
+        v_in = 1.65
+        code = adc.sample(v_in)
+        v_out = adc.code_to_voltage(code)
+        assert abs(v_out - v_in) <= adc.lsb_V
+
+    def test_stm32h7_adc_clamps_to_range(self):
+        from components import STM32H7_ADC
+        adc = STM32H7_ADC(resolution_bits=12, v_ref_V=3.3)
+        assert adc.sample(-1.0) == 0
+        assert adc.sample(10.0) == adc.n_codes - 1
+
+    def test_new_components_registered(self):
+        from components import COMPONENT_REGISTRY, get_component
+        for name in ('OPA380', 'BQ25570', 'STM32H7_ADC'):
+            assert name in COMPONENT_REGISTRY
+            # get_component normalizes names via upper + underscore
+            inst = get_component(name)
+            assert inst is not None

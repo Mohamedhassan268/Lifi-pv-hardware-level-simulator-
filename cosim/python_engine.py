@@ -22,7 +22,7 @@ Usage:
 
 import numpy as np
 from scipy import signal as sp_signal
-from typing import Dict
+from typing import Dict, Optional
 
 # Import from dedicated modules
 from cosim.channel import OpticalChannel
@@ -36,6 +36,7 @@ from cosim.modulation import (
     # Re-export Manchester codec for backward compatibility
     manchester_encode, manchester_decode,
 )
+from cosim.probes import ProbeCapture
 
 # Phase 2 models (imported lazily to keep backward compat if scipy missing)
 from cosim.pv_model import PVCellModel
@@ -56,16 +57,33 @@ class PVReceiver:
     """PV cell receiver with TIA and signal chain processing."""
 
     def __init__(self, responsivity=0.457, capacitance_nF=798,
-                 shunt_resistance_kOhm=138.8, n_cells=1, temperature_K=300):
-        self.R = responsivity
+                 shunt_resistance_kOhm=138.8, n_cells=1, temperature_K=300,
+                 responsivity_ref_T_K=300.0,
+                 responsivity_tempco_per_K=4e-4):
+        """
+        Args:
+            responsivity: A/W at responsivity_ref_T_K
+            responsivity_ref_T_K: Reference temperature for the given
+                responsivity value (typically 300 K / 25°C datasheet spec).
+            responsivity_tempco_per_K: Fractional change per Kelvin.
+                Typical values: Si ~4e-4/K (0.04%/°C), GaAs ~6e-4/K.
+        """
+        self.R_ref = responsivity
+        self.R_ref_T = responsivity_ref_T_K
+        self.R_tempco = responsivity_tempco_per_K
         self.C_j = capacitance_nF * 1e-9
         self.R_sh = shunt_resistance_kOhm * 1e3
         self.n_cells = n_cells
         self.T = temperature_K
         self.V_T = K_BOLTZMANN * temperature_K / Q_ELECTRON
 
+    @property
+    def R(self) -> float:
+        """Responsivity adjusted to the operating temperature."""
+        return self.R_ref * (1.0 + self.R_tempco * (self.T - self.R_ref_T))
+
     def optical_to_current(self, P_rx):
-        """I_ph = R * P_rx."""
+        """I_ph = R(T) * P_rx."""
         return self.R * P_rx
 
     def apply_tia(self, I_ph, t, R_tia=50e3, f_3db=3e6):
@@ -108,7 +126,9 @@ class PVReceiver:
 # MAIN SIMULATION RUNNER
 # =============================================================================
 
-def run_python_simulation(config) -> Dict:
+def run_python_simulation(config, bits_override=None,
+                          probes: Optional[ProbeCapture] = None,
+                          stage_hook=None) -> Dict:
     """
     Run a full system-level Python simulation using SystemConfig parameters.
 
@@ -117,6 +137,16 @@ def run_python_simulation(config) -> Dict:
 
     Args:
         config: SystemConfig instance
+        bits_override: Optional user-supplied TX bit array. When given, n_bits
+            is taken from the array length and the PRBS generator is skipped —
+            used by the text TX/RX GUI tab to send a known message.
+        probes: Optional ProbeCapture. When given, intermediate arrays are
+            captured at each block boundary (P_tx, P_rx, I_ph, per-source
+            noise, V_sense, V_ina, V_bpf, V_comp, bits_rx, ...). No-op when
+            None — pipeline runs as before.
+        stage_hook: Optional callable(stage: str). Invoked after TX, Channel,
+            and RX blocks complete. Used by the WebSocket runner for
+            cooperative pause/resume between blocks.
 
     Returns:
         Dict with keys: 'ber', 'n_errors', 'n_bits_tested', 'snr_est_dB',
@@ -129,16 +159,22 @@ def run_python_simulation(config) -> Dict:
     # Compute timing
     bit_period = 1.0 / cfg.data_rate_bps
     samples_per_bit = SAMPLES_PER_BIT
-    n_bits = cfg.n_bits
+    if bits_override is not None:
+        bits_tx = np.asarray(bits_override, dtype=int).ravel()
+        n_bits = len(bits_tx)
+    else:
+        n_bits = cfg.n_bits
+        bits_tx = None
     n_samples = n_bits * samples_per_bit
     dt = bit_period / samples_per_bit
     fs = 1.0 / dt
     t = np.arange(n_samples) * dt
 
-    # Generate TX bits
-    if cfg.random_seed is not None:
-        np.random.seed(cfg.random_seed)
-    bits_tx = np.random.randint(0, 2, n_bits)
+    # Generate TX bits if none were provided
+    if bits_tx is None:
+        if cfg.random_seed is not None:
+            np.random.seed(cfg.random_seed)
+        bits_tx = np.random.randint(0, 2, n_bits)
 
     # ========== TX: Modulate ==========
     P_tx = modulate(mod_scheme, bits_tx, t, config=cfg)
@@ -153,9 +189,27 @@ def run_python_simulation(config) -> Dict:
         tx_result = led_tx.process(P_tx_norm, t)
         P_tx = tx_result.P_tx
 
+    # ----- TX probes + pause point -----
+    if probes is not None:
+        probes.capture("tx.bits", bits_tx)
+        probes.capture("tx.P_tx", P_tx)
+    if stage_hook is not None:
+        stage_hook("TX")
+
     # ========== Channel: Propagate ==========
     channel = OpticalChannel.from_config(cfg)
     P_rx = channel.propagate(P_tx)
+
+    # ----- Channel probes + pause point -----
+    if probes is not None:
+        ch_result = channel.compute_gain()
+        probes.capture("channel.G_los", ch_result.gain_los)
+        probes.capture("channel.G_diffuse", ch_result.gain_diffuse)
+        probes.capture("channel.beer_lambert", ch_result.beer_lambert_factor)
+        probes.capture("channel.G_total", channel.channel_gain())
+        probes.capture("channel.P_rx", P_rx)
+    if stage_hook is not None:
+        stage_hook("Channel")
 
     # ========== RX: Photodetection ==========
     rx = PVReceiver(
@@ -164,6 +218,8 @@ def run_python_simulation(config) -> Dict:
         shunt_resistance_kOhm=cfg.sc_rsh_kOhm,
         n_cells=cfg.n_cells_series,
         temperature_K=cfg.temperature_K,
+        responsivity_ref_T_K=getattr(cfg, 'sc_responsivity_ref_T_K', 300.0),
+        responsivity_tempco_per_K=getattr(cfg, 'sc_responsivity_tempco_per_K', 4e-4),
     )
 
     # Phase 2: PV cell ODE model or simple I = R * P
@@ -175,15 +231,53 @@ def run_python_simulation(config) -> Dict:
     else:
         I_ph = rx.optical_to_current(P_rx)
 
+    # Capture clean photocurrent before noise
+    if probes is not None:
+        probes.capture("rx.I_ph", I_ph)
+
     # ========== Noise injection ==========
     bandwidth = cfg.data_rate_bps / 2
     noise_model = NoiseModel.from_config(cfg)
 
     if cfg.noise_enable:
-        noise = noise_model.generate_time_domain(len(I_ph), I_ph, bandwidth)
-        I_ph_noisy = I_ph + noise
+        rng = (np.random.default_rng(cfg.random_seed)
+               if cfg.random_seed is not None
+               else np.random.default_rng())
+
+        if probes is not None:
+            # Per-source decomposition is only computed when probes are
+            # active — keeps the hot path identical for non-observability runs.
+            per_source = noise_model.generate_per_source_time_domain(
+                len(I_ph), I_ph, bandwidth, rng=rng,
+            )
+            probes.capture("rx.noise.shot", per_source["shot"])
+            probes.capture("rx.noise.thermal", per_source["thermal"])
+            probes.capture("rx.noise.ambient", per_source["ambient"])
+            probes.capture("rx.noise.amplifier", per_source["amplifier"])
+            probes.capture("rx.noise.adc", per_source["adc"])
+            probes.capture("rx.noise.processing", per_source["processing"])
+            noise_awgn = per_source["total"]
+        else:
+            noise_awgn = noise_model.generate_time_domain(len(I_ph), I_ph, bandwidth)
+
+        # Real-world non-AWGN sources. Disabled by default in the constructor;
+        # opt-in via the preset's `enable_mains_flicker` / `enable_amp_flicker`.
+        noise_flicker = noise_model.mains_flicker_current(t, rng=rng)
+        noise_pink = noise_model.amp_flicker_current(len(I_ph), dt, rng=rng)
+
+        # Sum at the photocurrent domain BEFORE any voltage amplification so
+        # the gain stages amplify (signal + noise) together — this is the
+        # invariant that lets the demodulator's bit decision actually see noise.
+        I_ph_noisy = I_ph + noise_awgn + noise_flicker + noise_pink
+
+        if probes is not None:
+            probes.capture("rx.noise.mains_flicker", noise_flicker)
+            probes.capture("rx.noise.pink", noise_pink)
     else:
         I_ph_noisy = I_ph
+
+    if probes is not None:
+        probes.capture("rx.I_ph_noisy", I_ph_noisy)
 
     # ========== RX Signal Chain (topology-aware) ==========
     chain_waveforms = None
@@ -197,17 +291,18 @@ def run_python_simulation(config) -> Dict:
         # Amp + slicer: R_sense → amplifier → optional notch → threshold
         V_sense = I_ph_noisy * cfg.r_sense_ohm
 
-        # Amplifier gain (from INA or standalone amp)
-        gain = 10 ** (cfg.ina_gain_dB / 20) if cfg.ina_gain_dB > 0 else cfg.amp_gain_linear
-        V_amp = V_sense * gain
+        # Stage gains — each only applied if its field is meaningfully above unity.
+        # Previously the engine multiplied INA gain in, then multiplied
+        # amp_gain_linear in again, which produced ×G_ina × G_amp instead of
+        # the intended ×G_ina for presets that encoded the same ×G in both
+        # fields (e.g. lifi_poc_breadboard).
+        ina_gain  = 10 ** (cfg.ina_gain_dB / 20) if cfg.ina_gain_dB > 0 else 1.0
+        post_gain = cfg.amp_gain_linear           if cfg.amp_gain_linear > 1.0 else 1.0
+        V_amp = V_sense * ina_gain * post_gain
 
         # Apply notch filter if configured (González 2024: mains rejection)
         if cfg.notch_freq_hz is not None:
             V_amp = rx.apply_notch(V_amp, t, f_notch=cfg.notch_freq_hz, Q=cfg.notch_Q)
-
-        # Apply additional voltage amplifier gain if both INA and amp are present
-        if cfg.amp_gain_linear > 1 and cfg.ina_gain_dB > 0:
-            V_amp = V_amp * cfg.amp_gain_linear
 
         V_rx = V_amp
 
@@ -279,16 +374,54 @@ def run_python_simulation(config) -> Dict:
     # ========== BER calculation ==========
     ber_result = calculate_ber(bits_tx, bits_rx)
 
-    # SNR estimate
-    signal_power = np.var(I_ph) if np.var(I_ph) > 0 else 1e-30
-    noise_power = noise_model.total_noise_std(I_ph, bandwidth)**2
-    snr_db = 10 * np.log10(signal_power / max(noise_power, 1e-30))
+    # SNR — link-budget number (closed-form, includes ALL modelled sources).
+    # Previously this only summed the six AWGN variances, which made the
+    # number near-constant across ambient sweeps because the mains-flicker
+    # contribution (which scales as I_amb²) wasn't in the sum.  The
+    # link_budget_snr_db helper now adds analytical variances for mains
+    # flicker (Σ a_k²·(depth·I_amb)²/2) and 1/f pink (e_n²·f_c·ln(B/f_low)/R²)
+    # alongside the AWGN sum, so this number tracks the physical link.
+    from cosim.snr import link_budget_snr_db as _link_budget_snr_db
+    T_total = n_samples * dt
+    snr_db = _link_budget_snr_db(I_ph, bandwidth, noise_model, t_total_s=T_total)
+
+    # ----- RX probes: signal chain + recovered bits + SNR + pause point -----
+    if probes is not None:
+        if chain_waveforms is not None:
+            # V_bpf may be (n_stages, N) when multiple BPF stages are cascaded;
+            # store only the final stage so probe shape stays (N,).
+            v_bpf_arr = np.asarray(chain_waveforms.V_bpf)
+            if v_bpf_arr.ndim > 1:
+                v_bpf_arr = v_bpf_arr[-1]
+            probes.capture("rx.V_sense", chain_waveforms.V_sense)
+            probes.capture("rx.V_ina", chain_waveforms.V_ina)
+            probes.capture("rx.V_bpf", v_bpf_arr)
+            probes.capture("rx.V_comp", chain_waveforms.V_comp)
+        else:
+            # Non-INA topologies expose V_rx as the comparator-equivalent output.
+            probes.capture("rx.V_sense", I_ph_noisy * cfg.r_sense_ohm)
+            probes.capture("rx.V_comp", V_rx)
+        probes.capture("rx.bits_rx", bits_rx)
+        probes.capture("rx.snr_db", snr_db)
+    if stage_hook is not None:
+        stage_hook("RX")
+
+    # Eb/N0 against the AWGN floor only (mains flicker + pink are
+    # non-flat-spectrum, so they cannot honestly fold into N0).
+    from cosim.snr import eb_n0_db_awgn
+    eb_n0_awgn = eb_n0_db_awgn(
+        I_ph, bandwidth, bit_period, noise_model,
+    ) if cfg.noise_enable else float('nan')
 
     result = {
         'ber': ber_result['ber'],
         'n_errors': ber_result['n_errors'],
         'n_bits_tested': ber_result['n_bits_tested'],
-        'snr_est_dB': snr_db,
+        # Three scientifically distinct SNR-family numbers — see cosim/snr.py.
+        'snr_est_dB': snr_db,                        # legacy alias (kept for compat)
+        'snr_link_budget_dB': snr_db,
+        'snr_measured_dB': float('nan'),             # populated below if enabled
+        'eb_n0_dB_awgn_floor': eb_n0_awgn,
         'time': t,
         'P_tx': P_tx,
         'P_rx': P_rx,
@@ -324,5 +457,23 @@ def run_python_simulation(config) -> Dict:
 
     if tx_result is not None:
         result['P_optical'] = tx_result.P_optical
+
+    # ---- Measured SNR (two-run technique) ----
+    # Opt-in via cfg.measure_snr_enable. Doubles per-run cost because it
+    # spawns one noise-disabled reference run; the result is the SNR a lab
+    # instrument would actually measure at the demodulator input. Guarded
+    # against recursion by checking cfg.noise_enable.
+    if getattr(cfg, 'measure_snr_enable', False) and cfg.noise_enable:
+        from cosim.snr import measure_snr_db
+        try:
+            snr_nodes = measure_snr_db(
+                cfg, nodes=("rx.I_ph_noisy", "rx.V_rx"),
+                bits_override=bits_tx,
+            )
+            result['snr_measured_dB'] = snr_nodes.get("rx.V_rx", float('nan'))
+            result['snr_measured_at_Iph_dB'] = snr_nodes.get("rx.I_ph_noisy", float('nan'))
+        except Exception:
+            # Never let SNR measurement crash the main pipeline.
+            pass
 
     return result

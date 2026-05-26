@@ -293,9 +293,7 @@ class QuickStartWizard(QDialog):
         if self._config is None:
             return
         try:
-            from dataclasses import replace
-            cfg = replace(
-                self._config,
+            cfg = self._config.replace(
                 distance_m=self._wiz_distance.value(),
                 led_radiated_power_mW=self._wiz_power.value(),
                 data_rate_bps=self._wiz_rate.value(),

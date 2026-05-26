@@ -52,7 +52,7 @@
   "r_load_ohm": 220.0,
 
   "t_stop_s": 0.2,
-  "data_rate_bps": 10000.0,
+  "data_rate_bps": 10.0,
   "prbs_order": 7,
   "n_bits": 1000,
 

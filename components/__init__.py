@@ -75,6 +75,17 @@ from .amplifiers import (
     INA322,
     TLV2379,
     ADA4891,
+    OPA380,
+)
+
+# Power management (Phase 6C)
+from .power import (
+    BQ25570,
+)
+
+# ADCs (Phase 6C)
+from .adc import (
+    STM32H7_ADC,
 )
 
 # Comparators
@@ -116,6 +127,7 @@ __all__ = [
     'INA322',
     'TLV2379',
     'ADA4891',
+    'OPA380',
 
     # Comparators
     'TLV7011',
@@ -123,6 +135,12 @@ __all__ = [
     # MOSFETs
     'BSD235N',
     'NTS4409',
+
+    # Power management
+    'BQ25570',
+
+    # ADCs
+    'STM32H7_ADC',
 ]
 
 
@@ -149,6 +167,7 @@ COMPONENT_REGISTRY = {
     'INA322': INA322,
     'TLV2379': TLV2379,
     'ADA4891': ADA4891,
+    'OPA380': OPA380,
 
     # Comparators
     'TLV7011': TLV7011,
@@ -156,6 +175,13 @@ COMPONENT_REGISTRY = {
     # MOSFETs
     'BSD235N': BSD235N,
     'NTS4409': NTS4409,
+
+    # Power management
+    'BQ25570': BQ25570,
+
+    # ADCs
+    'STM32H7_ADC': STM32H7_ADC,
+    'STM32H7': STM32H7_ADC,
 }
 
 

@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    /* Tight default leading for an instrument feel. */
+    line-height: 1.35;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* All numeric values get tabular figures so columns of numbers align. */
+  input[type="number"], code, kbd, samp, pre,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+    font-family: "JetBrains Mono", "Cascadia Mono", "Consolas",
+      ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+}
+
+@layer utilities {
+  /* Hairline borders read as instrument chrome. */
+  .border-hair { border-color: rgba(255, 255, 255, 0.08); }
+  /* Uppercase tracked instrument labels. */
+  .label-inst {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgb(148 163 184);
+  }
+  /* Numeric readout style (monospace + tabular-nums via @layer base). */
+  .readout {
+    font-family: "JetBrains Mono", "Cascadia Mono", "Consolas",
+      ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .tab-nums { font-variant-numeric: tabular-nums; }
+}
+
+/* Hide native number-input spinners — they read as consumer-form. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}

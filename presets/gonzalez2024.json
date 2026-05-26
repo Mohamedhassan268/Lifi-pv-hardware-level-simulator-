@@ -37,7 +37,7 @@
   "ina_gbw_kHz": 0.0,
   "comparator_part": "TLV7011",
 
-  "amp_gain_linear": 165.0,
+  "amp_gain_linear": 11.0,
   "notch_freq_hz": 100.0,
   "notch_Q": 30.0,
 

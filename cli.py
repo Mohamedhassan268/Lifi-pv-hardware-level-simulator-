@@ -349,6 +349,98 @@ def cmd_sensitivity(args):
     )
 
 
+def cmd_thermal(args):
+    """Run a thermal sweep of one preset across a list of temperatures."""
+    from cosim.thermal_sweep import run_thermal_sweep
+
+    temps = [float(x) for x in args.temps.split(',')] if args.temps else \
+            [-10, 0, 25, 45, 65, 85]
+    out = args.output or str(Path('workspace') / 'thermal_sweep')
+
+    _header(f"THERMAL SWEEP: {args.preset}")
+    print(f"  Temperatures (C): {temps}\n")
+    run_thermal_sweep(args.preset, temps, output_dir=out, verbose=True)
+    print(f"\n  Figure saved under: {out}")
+
+
+def cmd_tolerance(args):
+    """Run a Monte Carlo tolerance sweep of one preset.
+
+    Tolerance spec formats:
+      --spec path/to/spec.json   (JSON dict of {field: frac_tol})
+      --tol field1:0.05,field2:0.10,...
+      (default): sc_responsivity:0.05,pv_dark_current_A:0.20,distance_m:0.02
+    """
+    import json as _json
+    from cosim.monte_carlo import run_monte_carlo
+
+    if args.spec:
+        with open(args.spec, 'r') as fh:
+            spec = _json.load(fh)
+    elif args.tol:
+        spec = {}
+        for pair in args.tol.split(','):
+            name, val = pair.split(':')
+            spec[name.strip()] = float(val)
+    else:
+        spec = {
+            'sc_responsivity': 0.05,
+            'pv_dark_current_A': 0.20,
+            'distance_m': 0.02,
+        }
+
+    out = args.output or str(Path('workspace') / 'monte_carlo')
+
+    _header(f"MONTE CARLO: {args.preset}  (N={args.runs})")
+    print(f"  Tolerance spec:")
+    for k, v in spec.items():
+        print(f"    {k}: +/-{v*100:.1f}%")
+    print()
+
+    result = run_monte_carlo(
+        preset=args.preset,
+        tolerance_spec=spec,
+        n_runs=args.runs,
+        ber_threshold=args.ber_threshold,
+        seed=args.seed,
+        output_dir=out,
+        verbose=True,
+    )
+
+    print(f"\n  Yield (BER < {args.ber_threshold:.0e}): {result.yield_fraction*100:.1f}%")
+    print(f"  Median BER:   {result.ber_median:.3e}")
+    print(f"  95%-ile BER:  {result.ber_p95:.3e}")
+    print(f"  Median SNR:   {result.snr_median_dB:.2f} dB")
+    print(f"\n  Figure saved under: {out}")
+
+
+def cmd_kicad(args):
+    """Export KiCad schematic + BOM for a preset."""
+    from kicad import export_kicad, ExportResult
+    from kicad.kicad_exporter import available_presets
+
+    presets = [args.preset] if args.preset else available_presets()
+    if not presets:
+        print("  No KiCad graph builders registered.")
+        return
+
+    out_dir = Path(args.output) if args.output else Path('workspace') / 'kicad'
+
+    _header(f"KICAD EXPORT -> {out_dir}")
+    for preset in presets:
+        try:
+            result: ExportResult = export_kicad(preset, out_dir)
+        except KeyError as exc:
+            print(f"  SKIP  {preset}: {exc}")
+            continue
+        print(f"  OK    {preset}")
+        print(f"         schematic: {result.schematic_path}")
+        print(f"         BOM:       {result.bom_path}")
+        print(f"         {result.component_count} components, {result.net_count} nets")
+        for w in result.warnings:
+            print(f"         warn: {w}")
+
+
 def cmd_ltspice(args):
     """Check LTspice installation."""
     from cosim.ltspice_runner import LTSpiceRunner, find_ltspice
@@ -432,6 +524,11 @@ def build_parser():
     ps = sub.add_parser('presets', help='List/inspect presets')
     ps.add_argument('name', nargs='?', help='Preset to inspect')
 
+    # kicad
+    kc = sub.add_parser('kicad', help='Export KiCad schematic + BOM for a preset')
+    kc.add_argument('--preset', help='Preset name (default: all registered)')
+    kc.add_argument('-o', '--output', help='Output directory (default: workspace/kicad)')
+
     # ltspice
     sub.add_parser('ltspice', help='Check LTspice installation')
 
@@ -446,6 +543,23 @@ def build_parser():
     cp.add_argument('--preset', help='Single preset to validate')
     cp.add_argument('--cross', action='store_true', help='Cross-validate standalone vs pipeline')
     cp.add_argument('-o', '--output', help='Output directory')
+
+    # thermal
+    th = sub.add_parser('thermal', help='Thermal sweep across temperatures')
+    th.add_argument('--preset', required=True, help='Preset name')
+    th.add_argument('--temps', help='Comma-separated C values (default: -10,0,25,45,65,85)')
+    th.add_argument('-o', '--output', help='Output directory')
+
+    # tolerance (Monte Carlo)
+    to = sub.add_parser('tolerance', help='Monte Carlo component tolerance sweep')
+    to.add_argument('--preset', required=True, help='Preset name')
+    to.add_argument('--runs', type=int, default=100, help='Number of MC trials (default: 100)')
+    to.add_argument('--spec', help='Path to JSON tolerance spec file')
+    to.add_argument('--tol', help='Inline spec: field1:0.05,field2:0.10,...')
+    to.add_argument('--ber-threshold', type=float, default=1e-3,
+                    help='BER threshold for yield calc (default: 1e-3)')
+    to.add_argument('--seed', type=int, help='RNG seed for reproducibility')
+    to.add_argument('-o', '--output', help='Output directory')
 
     # sensitivity
     se = sub.add_parser('sensitivity', help='Parameter sensitivity analysis')
@@ -477,10 +591,13 @@ def main():
         'gui':        cmd_gui,
         'pipeline':   cmd_pipeline,
         'presets':    cmd_presets,
+        'kicad':      cmd_kicad,
         'ltspice':    cmd_ltspice,
         'validate':   cmd_validate,
         'compare':    cmd_compare,
         'sensitivity': cmd_sensitivity,
+        'thermal':    cmd_thermal,
+        'tolerance':  cmd_tolerance,
     }
 
     if args.command in commands:

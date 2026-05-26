@@ -630,14 +630,13 @@ class ResultsTab(QWidget):
 
         try:
             from simulation.analysis import theoretical_ber_ook
-            from dataclasses import replace
 
             distances = np.linspace(0.05, 2.0, 200)
             ber_values = []
             snr_values = []
 
             for d in distances:
-                cfg_d = replace(self._config, distance_m=d)
+                cfg_d = self._config.replace(distance_m=d)
                 snr = cfg_d.snr_estimate_dB()
                 snr_values.append(snr)
                 ber_values.append(theoretical_ber_ook(snr))

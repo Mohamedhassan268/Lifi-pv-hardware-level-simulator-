@@ -432,6 +432,132 @@ Rout_ser OUT OUT_ext 10
 
 
 # =============================================================================
+# OPA380 - PRECISION TIA (Phase 6C, TIA redesign)
+# =============================================================================
+
+class OPA380(AmplifierBase):
+    """
+    Texas Instruments OPA380 Precision Wideband Transimpedance Amplifier.
+
+    Selected for the TIA-redesign work on the July 2026 Cairo PCB.
+    Replaces the generic ADA4891 TIA stage with a part optimized for
+    photodiode front-ends: low input bias (3 pA), 90 MHz GBW, and a
+    rail-to-rail output swing at 2.7-5.5 V supply.
+
+    Datasheet Parameters (TI OPA380, SBOS276):
+        - Supply: 2.7 V to 5.5 V single supply
+        - GBW: 90 MHz
+        - Slew rate: 80 V/us
+        - Input bias current: 3 pA (typical)
+        - Input offset voltage: 0.025 mV
+        - Input voltage noise: 5.8 nV/rtHz (at 100 kHz)
+        - Input current noise: 10 fA/rtHz
+        - Quiescent current: 7.5 mA
+        - Output swing: to within 200 mV of rails
+    """
+
+    def __init__(self, R_feedback: float = 100e3, C_feedback: float = 2.5e-12):
+        """
+        Initialize OPA380.
+
+        Args:
+            R_feedback: Transimpedance gain resistor (ohm). 100k => 100 kV/A.
+            C_feedback: Compensation capacitor (F). Sets TIA bandwidth.
+        """
+        super().__init__(R_feedback)
+        self._C_feedback = C_feedback
+
+        self._gbw_Hz = 90e6                 # 90 MHz
+        self._slew_rate_Vps = 80e6          # 80 V/us
+        self._input_noise_V = 5.8e-9        # 5.8 nV/rtHz
+        self._input_noise_A = 10e-15        # 10 fA/rtHz
+        self._input_bias_A = 3e-12          # 3 pA typical
+        self._input_offset_V = 25e-6        # 25 uV typical
+        self._supply_min = 2.7
+        self._supply_max = 5.5
+        self._quiescent_mA = 7.5
+        self._output_swing_margin = 0.20    # 200 mV from rails
+
+    @property
+    def name(self) -> str:
+        return "OPA380"
+
+    @property
+    def gain_bandwidth_product(self) -> float:
+        return self._gbw_Hz
+
+    @property
+    def slew_rate(self) -> float:
+        return self._slew_rate_Vps
+
+    @property
+    def input_noise_voltage(self) -> float:
+        return self._input_noise_V
+
+    @property
+    def input_noise_current(self) -> float:
+        return self._input_noise_A
+
+    @property
+    def input_bias_current(self) -> float:
+        return self._input_bias_A
+
+    @property
+    def transimpedance_V_per_A(self) -> float:
+        """Low-frequency transimpedance gain = R_feedback."""
+        return self.R_feedback
+
+    @property
+    def tia_bandwidth_Hz(self) -> float:
+        """
+        -3 dB TIA bandwidth set by the compensation capacitor.
+
+        f_3dB ≈ 1 / (2·pi·R_f·C_f).
+        """
+        return 1.0 / (2 * np.pi * self.R_feedback * self._C_feedback)
+
+    def spice_subcircuit(self) -> str:
+        """Behavioral SPICE subcircuit for OPA380 in TIA configuration."""
+        return f"""\
+* OPA380 Precision TIA - Behavioral Model
+* Rf = {self.R_feedback/1e3:.1f} kohm, Cf = {self._C_feedback*1e12:.2f} pF
+* GBW = {self._gbw_Hz/1e6:.0f} MHz, SR = {self._slew_rate_Vps/1e6:.0f} V/us
+.SUBCKT OPA380 INP INN OUT VCC VEE
+Rinp INP 0 1T
+Rinn INN 0 1T
+
+Ediff diff_int 0 INP INN 200000
+Rpole diff_int pole_out 1k
+Cpole pole_out 0 {1/(2*np.pi*self._gbw_Hz/2e5*1e3):.6e}
+
+Bout OUT 0 V = max(min(V(pole_out), V(VCC)-{self._output_swing_margin}), V(VEE)+{self._output_swing_margin})
+.ENDS OPA380"""
+
+    def get_parameters(self) -> Dict[str, Any]:
+        return {
+            'name': self.name,
+            'type': 'transimpedance_amplifier',
+            'R_feedback_ohm': self.R_feedback,
+            'C_feedback_F': self._C_feedback,
+            'transimpedance_V_per_A': self.transimpedance_V_per_A,
+            'tia_bandwidth_Hz': self.tia_bandwidth_Hz,
+            'GBW_Hz': self._gbw_Hz,
+            'slew_rate_Vps': self._slew_rate_Vps,
+            'input_noise_voltage_VrtHz': self._input_noise_V,
+            'input_noise_current_ArtHz': self._input_noise_A,
+            'input_bias_current_A': self._input_bias_A,
+            'input_offset_V': self._input_offset_V,
+            'supply_min_V': self._supply_min,
+            'supply_max_V': self._supply_max,
+            'quiescent_current_mA': self._quiescent_mA,
+        }
+
+    def __repr__(self):
+        return (f"OPA380(Rf={self.R_feedback/1e3:.0f}k, "
+                f"BW={self.tia_bandwidth_Hz/1e3:.0f}kHz)")
+
+
+# =============================================================================
 # SELF-TEST
 # =============================================================================
 
@@ -462,5 +588,13 @@ if __name__ == "__main__":
     print(f"  {ada}")
     print(f"  GBW: {ada.gain_bandwidth_product/1e6:.0f} MHz")
     print(f"  Slew rate: {ada.slew_rate/1e6:.0f} V/us")
+
+    # Test OPA380
+    print("\n--- OPA380 (Precision TIA) ---")
+    opa = OPA380(R_feedback=100e3, C_feedback=2.5e-12)
+    print(f"  {opa}")
+    print(f"  Transimpedance: {opa.transimpedance_V_per_A/1e3:.0f} kV/A")
+    print(f"  TIA bandwidth: {opa.tia_bandwidth_Hz/1e3:.0f} kHz")
+    print(f"  GBW: {opa.gain_bandwidth_product/1e6:.0f} MHz")
 
     print("\n[OK] Amplifier tests passed!")
