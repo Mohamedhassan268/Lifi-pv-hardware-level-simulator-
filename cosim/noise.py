@@ -123,6 +123,10 @@ class NoiseModel:
                  comparator_offset_mV: float = 1.0,
                  comparator_jitter_ns: float = 5.0,
                  data_rate_bps: float = 5000.0,
+                 # Temperature-dependent dark current
+                 dark_current_ref_A: float = 0.0,
+                 dark_current_ref_T_K: float = 300.0,
+                 dark_current_doubling_dT_K: float = 10.0,
                  # Enable flags for each source
                  enable_shot: bool = True,
                  enable_thermal: bool = True,
@@ -167,6 +171,10 @@ class NoiseModel:
         self.comp_jitter_s = comparator_jitter_ns * 1e-9
         self.data_rate = data_rate_bps
 
+        self.dark_current_ref_A = dark_current_ref_A
+        self.dark_current_ref_T_K = dark_current_ref_T_K
+        self.dark_current_doubling_dT_K = max(dark_current_doubling_dT_K, 1e-9)
+
         self.enable_shot = enable_shot
         self.enable_thermal = enable_thermal
         self.enable_ambient = enable_ambient
@@ -198,6 +206,9 @@ class NoiseModel:
             comparator_offset_mV=config.comparator_offset_mV,
             comparator_jitter_ns=config.comparator_jitter_ns,
             data_rate_bps=config.data_rate_bps,
+            dark_current_ref_A=config.pv_dark_current_A,
+            dark_current_ref_T_K=config.pv_dark_current_ref_T_K,
+            dark_current_doubling_dT_K=config.dark_current_doubling_dT_K,
             enable_shot=config.noise_shot_enable,
             enable_thermal=config.noise_thermal_enable,
             enable_ambient=config.noise_ambient_enable,
@@ -214,6 +225,15 @@ class NoiseModel:
     # -------------------------------------------------------------------------
     # Individual noise sources (all return variance in A²)
     # -------------------------------------------------------------------------
+
+    def dark_current_at_T(self) -> float:
+        """Dark current at the model's temperature.
+
+        I_dark(T) = I_ref · 2^((T - T_ref) / dT_doubling)
+        (Si doubles every ~10 K; GaAs ~7 K.)
+        """
+        dT = self.T - self.dark_current_ref_T_K
+        return self.dark_current_ref_A * 2.0 ** (dT / self.dark_current_doubling_dT_K)
 
     def shot_noise_variance(self, I_ph: float, bandwidth: float,
                             I_dark: float = 0.0) -> float:

@@ -23,9 +23,10 @@ The July 2026 PCB bring-up in Cairo will use 500 units; this module
 feeds the yield target (currently: 95% of units meet BER < 1e-3).
 """
 
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 import numpy as np
 import matplotlib
@@ -75,6 +76,65 @@ def _sample_param(nominal: float, tolerance: float, rng: np.random.Generator) ->
     return float(rng.uniform(lo, hi))
 
 
+def iter_monte_carlo(preset: str,
+                     tolerance_spec: Dict[str, float],
+                     n_runs: int,
+                     seed: Optional[int] = None,
+                     cancel: Optional[threading.Event] = None,
+                     verbose: bool = False) -> Iterator[Dict[str, Any]]:
+    """Yield one Monte Carlo trial at a time.
+
+    Shared by the batch path (run_monte_carlo) and the streaming path
+    (backend.routers.sweep_ws.stream_monte_carlo) so the two cannot drift.
+
+    Each yield:
+        {"i", "ber", "snr_dB", "p_rx_avg_uW", "overrides"}
+
+    The inner simulator's noise/bit realization is pinned to a fixed seed
+    (the sweep seed, or 0) so the only source of BER variation across trials
+    is the tolerance sampling. Pass a threading.Event as `cancel` to stop early.
+    """
+    rng = np.random.default_rng(seed)
+    inner_seed = seed if seed is not None else 0
+    baseline = SystemConfig.from_preset(preset)
+
+    # Validate tolerance spec references real, numeric fields.
+    nominals: Dict[str, float] = {}
+    for fname in tolerance_spec:
+        if not hasattr(baseline, fname):
+            raise ValueError(
+                f"Tolerance spec references unknown field '{fname}'. "
+                f"Check spelling against SystemConfig.")
+        val = getattr(baseline, fname)
+        if not isinstance(val, (int, float)):
+            raise ValueError(
+                f"Tolerance spec field '{fname}' must be numeric, "
+                f"got {type(val).__name__}")
+        nominals[fname] = float(val)
+
+    for i in range(n_runs):
+        if cancel is not None and cancel.is_set():
+            return
+        overrides = {
+            fname: _sample_param(nominals[fname], tol, rng)
+            for fname, tol in tolerance_spec.items()
+        }
+        cfg = baseline.replace(random_seed=inner_seed, **overrides)
+
+        try:
+            res = run_python_simulation(cfg)
+            ber = float(res.get('ber', 1.0))
+            snr = float(res.get('snr_est_dB', 0.0))
+            p_rx = float(res.get('P_rx_avg_uW', 0.0))
+        except Exception as e:  # noqa: BLE001
+            if verbose:
+                print(f"  run {i+1}: FAILED ({e!r})")
+            ber, snr, p_rx = 1.0, 0.0, 0.0
+
+        yield {"i": i, "ber": ber, "snr_dB": snr,
+               "p_rx_avg_uW": p_rx, "overrides": overrides}
+
+
 def run_monte_carlo(preset: str,
                     tolerance_spec: Dict[str, float],
                     n_runs: int = 100,
@@ -95,29 +155,6 @@ def run_monte_carlo(preset: str,
     Returns:
         MonteCarloResult with BER/SNR samples and yield statistics.
     """
-    rng = np.random.default_rng(seed)
-    # Hold the inner simulator's noise/bit realization fixed across runs so the
-    # only source of BER variation is the tolerance sampling below.
-    inner_seed = seed if seed is not None else 0
-    baseline = SystemConfig.from_preset(preset)
-
-    # Validate tolerance spec references real fields
-    for fname in tolerance_spec:
-        if not hasattr(baseline, fname):
-            raise ValueError(
-                f"Tolerance spec references unknown field '{fname}'. "
-                f"Check spelling against SystemConfig.")
-
-    # Capture nominal values up-front
-    nominals: Dict[str, float] = {}
-    for fname in tolerance_spec:
-        val = getattr(baseline, fname)
-        if not isinstance(val, (int, float)):
-            raise ValueError(
-                f"Tolerance spec field '{fname}' must be numeric, "
-                f"got {type(val).__name__}")
-        nominals[fname] = float(val)
-
     result = MonteCarloResult(
         preset=preset,
         n_runs=n_runs,
@@ -125,27 +162,13 @@ def run_monte_carlo(preset: str,
         ber_threshold=ber_threshold,
     )
 
-    for i in range(n_runs):
-        overrides = {
-            fname: _sample_param(nominals[fname], tol, rng)
-            for fname, tol in tolerance_spec.items()
-        }
-        cfg = baseline.replace(random_seed=inner_seed, **overrides)
+    for sample in iter_monte_carlo(preset, tolerance_spec, n_runs,
+                                   seed=seed, verbose=verbose):
+        result.ber_samples.append(sample["ber"])
+        result.snr_samples.append(sample["snr_dB"])
+        result.p_rx_samples.append(sample["p_rx_avg_uW"])
 
-        try:
-            res = run_python_simulation(cfg)
-            ber = float(res.get('ber', 1.0))
-            snr = float(res.get('snr_est_dB', 0.0))
-            p_rx = float(res.get('P_rx_avg_uW', 0.0))
-        except Exception as e:
-            if verbose:
-                print(f"  run {i+1}: FAILED ({e!r})")
-            ber, snr, p_rx = 1.0, 0.0, 0.0
-
-        result.ber_samples.append(ber)
-        result.snr_samples.append(snr)
-        result.p_rx_samples.append(p_rx)
-
+        i = sample["i"]
         if verbose and (i + 1) % max(1, n_runs // 10) == 0:
             print(f"  run {i+1}/{n_runs}  "
                   f"median BER = {result.ber_median:.3e}  "

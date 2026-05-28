@@ -41,11 +41,9 @@ _PAPER_METRICS = {
             # real-world losses not present in an ideal first-principles
             # model; per CLAUDE.md we validate against physics, not fits.
             'channel_gain': 0.0773,
-            # TODO(verify): pipeline P_rx/I_ph run ~16% above target while
-            # channel_gain matches to 0.1%. Discrepancy is downstream of
-            # propagation — suspect P_tx unit mismatch in preset vs the
-            # paper's 9.3 mW, or a responsivity-tempco interaction since
-            # the 351e7f1 commit added temperature-dependent R(T).
+            # P_rx/I_ph now match target to 0.1% (was ~16% high before OOK/
+            # Manchester modulation was re-centred on average optical power,
+            # commit d21a828 — the old offset inflated average P_rx).
             'P_rx_uW': 718.9,
             'I_ph_uA': 328.5,
             'BER': 1.008e-3,
@@ -68,6 +66,8 @@ _PAPER_METRICS = {
     'sarwar2017': {
         'label': 'Sarwar 2017',
         'metrics': ['BER', 'data_rate_mbps'],
+        # Paper reports the gross modulated rate (15.03 Mb/s), no CP/FEC removed.
+        'rate_basis': {'cp': False, 'code_rate': None},
         'expected': {
             'BER': 1.6883e-3,
             'data_rate_mbps': 15.03,
@@ -76,6 +76,10 @@ _PAPER_METRICS = {
     'oliveira2024': {
         'label': 'Oliveira 2024',
         'metrics': ['BER', 'data_rate_mbps'],
+        # Paper reports net throughput after CP and its rate-5/6 LDPC. The
+        # pipeline doesn't run the codec for this preset (BER is from the flat
+        # 64-QAM link), but the net-rate accounting applies the locked code rate.
+        'rate_basis': {'cp': True, 'code_rate': 5 / 6},
         'expected': {
             # BER is intentionally reported as INFO (no key here => not gated).
             # The pipeline models a flat 64-QAM DCO-OFDM link whose BER is
@@ -88,11 +92,8 @@ _PAPER_METRICS = {
             # than PASS/FAIL'd. (Pipeline BER 5e-4 is well under the paper's own
             # FEC threshold of 3.8e-3, which is its actual acceptance criterion.)
             #
-            # data_rate ~19.5% high is a real, understood gap: the paper's net
-            # 21.3 Mbps = 25.7 gross x (1 - 0.171 FEC overhead), but the
-            # comparator applies only CP overhead (nfft/(nfft+cp_len)). Left
-            # gated (passes at <20%); fixing the overhead model would require
-            # wiring FEC rate into the payload-rate calc for non-fec_enable OFDM.
+            # data_rate now matches to ~0.4%: gross 25.7 x CP(1024/1034) x 5/6
+            # = 21.21 Mb/s vs paper's net 21.3, via the 'rate_basis' above.
             'data_rate_mbps': 21.3,
         },
     },
@@ -106,6 +107,10 @@ _PAPER_METRICS = {
     'ieee_802_11bb': {
         'label': 'IEEE 802.11bb-2023 (HE PHY 20MHz MCS7, LDPC 5/6)',
         'metrics': ['BER', 'data_rate_mbps'],
+        # Net rate after CP and the standard's rate-5/6 LDPC (fec_enable=True
+        # here, but the basis is declared explicitly so the metric no longer
+        # depends on the fec_enable coupling).
+        'rate_basis': {'cp': True, 'code_rate': 5 / 6},
         'expected': {
             # Post-FEC BER target. Link budget set so SNR ~21 dB at the
             # receiver — matches 802.11bb MCS 7 sensitivity. Uncoded channel
@@ -153,14 +158,20 @@ def validate_preset(preset_name, verbose=True):
     # Run pipeline
     result = run_python_simulation(cfg)
 
-    # Effective payload data rate for OFDM after CP overhead.
-    # For OOK/Manchester/BFSK/PWM-ASK this reduces to cfg.data_rate_bps.
+    # Effective payload data rate. Each OFDM paper reports its rate at a
+    # different point in the chain (gross modulated rate vs. net after CP and
+    # FEC), so the overheads to apply are declared per-paper as
+    #   'rate_basis': {'cp': bool, 'code_rate': float | None}
+    # in _PAPER_METRICS. cfg.data_rate_bps is always the gross modulated rate.
+    # For OOK/Manchester/BFSK/PWM-ASK the gross rate is the payload (no basis).
     payload_rate_bps = cfg.data_rate_bps
-    if cfg.modulation.upper() == 'OFDM' and cfg.ofdm_nfft and cfg.ofdm_cp_len:
-        payload_rate_bps *= cfg.ofdm_nfft / (cfg.ofdm_nfft + cfg.ofdm_cp_len)
-    # FEC reduces payload by code rate (k/n). Honour this when fec_enable is set.
-    if getattr(cfg, 'fec_enable', False):
-        payload_rate_bps *= cfg.fec_rate_num / cfg.fec_rate_den
+    if cfg.modulation.upper() == 'OFDM':
+        # Default: CP overhead only (back-compat for undeclared OFDM presets).
+        basis = paper.get('rate_basis', {'cp': True, 'code_rate': None})
+        if basis.get('cp') and cfg.ofdm_nfft and cfg.ofdm_cp_len:
+            payload_rate_bps *= cfg.ofdm_nfft / (cfg.ofdm_nfft + cfg.ofdm_cp_len)
+        if basis.get('code_rate'):
+            payload_rate_bps *= basis['code_rate']
 
     # Extract pipeline metrics
     pipeline_metrics = {

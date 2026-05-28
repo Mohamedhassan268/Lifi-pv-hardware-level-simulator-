@@ -36,10 +36,10 @@ import math
 import threading
 from typing import Any, Iterator
 
-import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from cosim.ber_sweep import stream_ber_vs_distance, stream_ber_vs_snr
+from cosim.monte_carlo import iter_monte_carlo
 from cosim.noise import NoiseModel
 from cosim.python_engine import run_python_simulation
 from cosim.system_config import SystemConfig
@@ -82,47 +82,22 @@ def stream_thermal(preset: str, temps_C: list[float],
         }
 
 
-def _sample_param(nominal: float, tol: float, rng: np.random.Generator) -> float:
-    lo = nominal * (1.0 - tol)
-    hi = nominal * (1.0 + tol)
-    return float(rng.uniform(lo, hi))
-
-
 def stream_monte_carlo(preset: str, tolerance_spec: dict[str, float],
                        n_runs: int, seed: int | None,
                        cancel: threading.Event) -> Iterator[dict[str, Any]]:
-    """Yield one dict per Monte Carlo trial. Mirrors run_monte_carlo()."""
-    rng = np.random.default_rng(seed)
-    baseline = SystemConfig.from_preset(preset)
+    """Yield one dict per Monte Carlo trial (WS payload shape).
 
-    for fname in tolerance_spec:
-        if not hasattr(baseline, fname):
-            raise ValueError(f"Unknown field '{fname}'")
-
-    nominals = {fname: float(getattr(baseline, fname)) for fname in tolerance_spec}
-
-    for i in range(n_runs):
-        if cancel.is_set():
-            return
-        overrides = {
-            fname: _sample_param(nominals[fname], tol, rng)
-            for fname, tol in tolerance_spec.items()
-        }
-        cfg = baseline.replace(**overrides)
-        try:
-            res = run_python_simulation(cfg)
-            ber = float(res.get("ber", 1.0))
-            snr = float(res.get("snr_est_dB", 0.0))
-            p_rx = float(res.get("P_rx_avg_uW", 0.0))
-        except Exception:  # noqa: BLE001
-            ber, snr, p_rx = 1.0, 0.0, 0.0
-
+    Thin adapter over cosim.monte_carlo.iter_monte_carlo so the batch and
+    streaming paths share one loop and cannot drift.
+    """
+    for s in iter_monte_carlo(preset, tolerance_spec, n_runs,
+                              seed=seed, cancel=cancel):
         yield {
-            "i": i,
-            "ber": ber,
-            "snr_dB": snr,
-            "P_rx_avg_uW": p_rx,
-            "overrides": overrides,
+            "i": s["i"],
+            "ber": s["ber"],
+            "snr_dB": s["snr_dB"],
+            "P_rx_avg_uW": s["p_rx_avg_uW"],
+            "overrides": s["overrides"],
         }
 
 
