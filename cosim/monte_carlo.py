@@ -96,6 +96,9 @@ def run_monte_carlo(preset: str,
         MonteCarloResult with BER/SNR samples and yield statistics.
     """
     rng = np.random.default_rng(seed)
+    # Hold the inner simulator's noise/bit realization fixed across runs so the
+    # only source of BER variation is the tolerance sampling below.
+    inner_seed = seed if seed is not None else 0
     baseline = SystemConfig.from_preset(preset)
 
     # Validate tolerance spec references real fields
@@ -127,7 +130,7 @@ def run_monte_carlo(preset: str,
             fname: _sample_param(nominals[fname], tol, rng)
             for fname, tol in tolerance_spec.items()
         }
-        cfg = baseline.replace(**overrides)
+        cfg = baseline.replace(random_seed=inner_seed, **overrides)
 
         try:
             res = run_python_simulation(cfg)
