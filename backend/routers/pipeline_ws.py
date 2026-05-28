@@ -358,7 +358,7 @@ async def pipeline_ws(ws: WebSocket) -> None:
                     )
 
             if py_result:
-                await send_json({
+                payload = {
                     "type": "waveforms",
                     "time": _subsample(py_result.get("time")),
                     "P_tx": _subsample(py_result.get("P_tx")),
@@ -368,7 +368,28 @@ async def pipeline_ws(ws: WebSocket) -> None:
                     "bits_tx": _subsample(py_result.get("bits_tx"), max_points=512),
                     "bits_rx": _subsample(py_result.get("bits_rx"), max_points=512),
                     "modulation": py_result.get("modulation"),
-                })
+                }
+                # Constellation payload (ConstellationPanel.tsx renders this).
+                # OFDM: complex post-FFT symbols -> ship as [real[], imag[]].
+                # BFSK: (E0, E1) Goertzel-energy pairs per bit.
+                # Cap point count for SVG-scatter perf. Ceil-div so e.g.
+                # 4000 -> stride 2 (gives 2000), not stride 1 (no-op).
+                _CONSTELL_MAX = 2048
+                ofdm_syms = py_result.get("ofdm_symbols") or []
+                if ofdm_syms:
+                    if len(ofdm_syms) > _CONSTELL_MAX:
+                        stride = (len(ofdm_syms) + _CONSTELL_MAX - 1) // _CONSTELL_MAX
+                        ofdm_syms = ofdm_syms[::stride]
+                    payload["ofdm_iq_real"] = [float(s.real) for s in ofdm_syms]
+                    payload["ofdm_iq_imag"] = [float(s.imag) for s in ofdm_syms]
+                bfsk_e = py_result.get("bfsk_energies") or []
+                if bfsk_e:
+                    if len(bfsk_e) > _CONSTELL_MAX:
+                        stride = (len(bfsk_e) + _CONSTELL_MAX - 1) // _CONSTELL_MAX
+                        bfsk_e = bfsk_e[::stride]
+                    payload["bfsk_e0"] = [float(p[0]) for p in bfsk_e]
+                    payload["bfsk_e1"] = [float(p[1]) for p in bfsk_e]
+                await send_json(payload)
 
             await send_json({
                 "type": "done",

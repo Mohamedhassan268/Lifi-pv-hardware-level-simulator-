@@ -1,20 +1,28 @@
 /**
  * useDebouncedValidate — pings POST /api/config/validate on a debounced cadence
- * whenever the watched config changes. Returns `{ valid, errors }` for the
- * BuilderRail to render. Errors come back as a list of strings (the backend
- * splits the multi-line ValueError message).
+ * whenever the watched config changes. Returns `{ valid, errors, issues }`.
+ *
+ * `errors` is the legacy list of ERROR-level messages (back-compat with
+ * existing call sites). `issues` is the structured list from
+ * cosim.validation: ERROR + WARNING + INFO, with field/rule_id/suggestion.
+ * Consumers that want color-coding or inline placement read `issues`.
  */
 
 import { useEffect, useState } from "react";
 
-import { api, type ConfigDict } from "@/api/client";
+import {
+  api,
+  type ConfigDict,
+  type ValidationIssue,
+} from "@/api/client";
 
 interface ValidateResult {
   valid: boolean;
   errors: string[];
+  issues: ValidationIssue[];
 }
 
-const IDLE: ValidateResult = { valid: true, errors: [] };
+const IDLE: ValidateResult = { valid: true, errors: [], issues: [] };
 
 export function useDebouncedValidate(
   config: ConfigDict | null,
@@ -33,13 +41,26 @@ export function useDebouncedValidate(
         .validateConfig(config)
         .then((r) => {
           if (cancelled) return;
-          setResult({ valid: r.valid, errors: r.errors ?? [] });
+          setResult({
+            valid: r.valid,
+            errors: r.errors ?? [],
+            issues: r.issues ?? [],
+          });
         })
         .catch((e) => {
           if (cancelled) return;
+          const msg = e instanceof Error ? e.message : String(e);
           setResult({
             valid: false,
-            errors: [e instanceof Error ? e.message : String(e)],
+            errors: [msg],
+            issues: [
+              {
+                level: "error",
+                field: "network",
+                message: msg,
+                rule_id: "client.validate_request_failed",
+              },
+            ],
           });
         });
     }, delayMs);

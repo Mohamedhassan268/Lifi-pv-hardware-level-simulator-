@@ -218,6 +218,20 @@ class SimConfig:
     # the closed-form link-budget number. Doubles per-run cost; opt-in.
     measure_snr_enable: bool = False
 
+    # Forward Error Correction (cosim/fec.py). When fec_enable is True the
+    # pipeline wraps modulate/demodulate with LDPC encode/decode. cfg.n_bits
+    # is interpreted as the *message* bit budget; the transmitted bit count
+    # expands by n/k = rate_den/rate_num. See cosim/fec.py for the
+    # standards-alignment and soft-information caveats.
+    fec_enable: bool = False
+    fec_rate_num: int = 5            # numerator of code rate
+    fec_rate_den: int = 6            # denominator (5/6 = 802.11bb MCS 7)
+    fec_codeword_n: int = 648        # 802.11 short codeword
+    fec_d_v: int = 3                 # variable-node degree (regular LDPC)
+    fec_max_iter: int = 50           # BP iterations
+    fec_decode_snr_db: float = 5.0   # LLR-init SNR for the BP decoder
+    fec_seed: int = 42
+
 
 @dataclass
 class ModulationConfig:
@@ -365,73 +379,25 @@ class SystemConfig:
             self.rx.dcdc_enable = self.rx.dcdc_fsw_kHz > 0
 
         # --- Validation ---
-        errors = []
-
-        if self.channel.distance_m <= 0:
-            errors.append(f"distance_m must be > 0, got {self.channel.distance_m}")
-        if self.sim.data_rate_bps <= 0:
-            errors.append(f"data_rate_bps must be > 0, got {self.sim.data_rate_bps}")
-        if self.sim.modulation not in self._VALID_MODULATIONS:
-            errors.append(
-                f"modulation must be one of {sorted(self._VALID_MODULATIONS)}, "
-                f"got '{self.sim.modulation}'"
-            )
-        if self.rx.rx_topology not in self._VALID_TOPOLOGIES:
-            errors.append(
-                f"rx_topology must be one of {sorted(self._VALID_TOPOLOGIES)}, "
-                f"got '{self.rx.rx_topology}'"
-            )
-        if self.rx.bpf_f_low_Hz >= self.rx.bpf_f_high_Hz and self.rx.bpf_f_low_Hz > 0:
-            errors.append(
-                f"bpf_f_low_Hz ({self.rx.bpf_f_low_Hz}) must be < "
-                f"bpf_f_high_Hz ({self.rx.bpf_f_high_Hz})"
-            )
-
-        # Channel validation
-        if self.channel.fov_half_angle_deg <= 0 or self.channel.fov_half_angle_deg > 90:
-            errors.append(
-                f"fov_half_angle_deg must be in (0, 90], got {self.channel.fov_half_angle_deg}"
-            )
-        if self.channel.n_reflections < 0:
-            errors.append(f"n_reflections must be >= 0, got {self.channel.n_reflections}")
-        if self.channel.wall_reflectivity < 0 or self.channel.wall_reflectivity > 1:
-            errors.append(
-                f"wall_reflectivity must be in [0, 1], got {self.channel.wall_reflectivity}"
-            )
-
-        # Noise validation
-        if self.noise.ambient_illuminance_lux < 0:
-            errors.append(
-                f"ambient_illuminance_lux must be >= 0, got {self.noise.ambient_illuminance_lux}"
-            )
-
-        # Statistical-resolution soft guard. Don't error out — papers
-        # legitimately use small n_bits for fast smoke runs — but warn so
-        # users don't mistake a too-small sample for a clean signal.
-        target_ber = self.validation.target_ber or 0.0
-        if target_ber > 0:
-            import math as _math
-            min_bits = int(_math.ceil(10.0 / target_ber))
-            if self.sim.n_bits < min_bits:
-                import logging as _logging
-                _logging.getLogger(__name__).warning(
-                    "n_bits=%d is too small to resolve target_ber=%.0e — "
-                    "need ≥ %d bits (~10 errors expected). BER may read 0 by chance.",
-                    self.sim.n_bits, target_ber, min_bits,
-                )
-
-        # Physical quantities must be non-negative
-        for field_name in ('sc_area_cm2', 'sc_responsivity', 'sc_cj_nF',
-                           'r_sense_ohm', 'vcc_volts'):
-            val = getattr(self.rx, field_name)
-            if val < 0:
-                errors.append(f"{field_name} must be >= 0, got {val}")
-        if self.tx.led_radiated_power_mW < 0:
-            errors.append(f"led_radiated_power_mW must be >= 0, got {self.tx.led_radiated_power_mW}")
-        if self.tx.bias_current_A < 0:
-            errors.append(f"bias_current_A must be >= 0, got {self.tx.bias_current_A}")
-
-        if errors:
+        # Single source of truth lives in cosim.validation. _post_init enforces
+        # ERROR-level issues by raising ValueError (preserving the existing
+        # contract); WARNING/INFO issues are logged but do not block construction.
+        from cosim.validation import (
+            validate_config as _validate_config,
+            has_errors as _has_errors,
+            IssueLevel as _IssueLevel,
+        )
+        issues = _validate_config(self)
+        if issues:
+            import logging as _logging
+            _log = _logging.getLogger(__name__)
+            for issue in issues:
+                if issue.level == _IssueLevel.WARNING:
+                    _log.warning("%s: %s", issue.field, issue.message)
+                elif issue.level == _IssueLevel.INFO:
+                    _log.info("%s: %s", issue.field, issue.message)
+        if _has_errors(issues):
+            errors = [i.message for i in issues if i.level == _IssueLevel.ERROR]
             raise ValueError(
                 "Invalid SystemConfig:\n  " + "\n  ".join(errors)
             )
@@ -520,6 +486,17 @@ class SystemConfig:
             sub = getattr(self, sub_attr)
             result.update(asdict(sub))
         return result
+
+    def validate(self) -> list:
+        """Run all validation rules and return a list of ValidationIssue.
+
+        Unlike construction (which raises on ERROR-level issues), this method
+        never raises. UIs use it to render structured feedback (CLI table,
+        GUI side panel, frontend inline messages) and can decide whether to
+        gate Run/Submit on ``cosim.validation.has_errors(issues)``.
+        """
+        from cosim.validation import validate_config
+        return validate_config(self)
 
     def to_json(self, indent: int = 2) -> str:
         """Serialize to JSON string."""

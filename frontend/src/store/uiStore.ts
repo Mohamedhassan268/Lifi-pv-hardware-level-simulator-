@@ -7,7 +7,14 @@
 
 import { create } from "zustand";
 
-export type Route = "landing" | "setup" | "engine" | "sweeps" | "builder" | "ac";
+export type Route =
+  | "landing"
+  | "setup"
+  | "engine"
+  | "sweeps"
+  | "builder"
+  | "ac"
+  | "inspector";
 
 interface UIState {
   route: Route;

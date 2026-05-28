@@ -115,6 +115,10 @@ export function BodePanel() {
           {chip("midband", `${result.midband_gain_db.toFixed(1)} dB`)}
         </div>
       </header>
+      <p className="mb-3 text-[11px] text-slate-500">
+        PM / GM derived from the open-loop band-pass cascade — negative values
+        are valid (no feedback loop).
+      </p>
       <PlotCanvas data={data} layout={layout} aspect="16/11" />
     </Card>
   );

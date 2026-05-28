@@ -22,6 +22,47 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type ConfigDict = Record<string, unknown>;
 
+export type ValidationIssueLevel = "error" | "warning" | "info";
+
+export interface ValidationIssue {
+  level: ValidationIssueLevel;
+  field: string;       // dotted path, e.g. "tx.bias_current_A"
+  message: string;
+  suggestion?: string;
+  rule_id?: string;
+}
+
+export interface ValidateConfigResponse {
+  valid: boolean;
+  errors: string[];
+  issues: ValidationIssue[];
+  normalized?: ConfigDict;
+}
+
+export interface KicadExportResult {
+  preset: string;
+  schematic_path: string;
+  bom_path: string;
+  component_count: number;
+  net_count: number;
+  warnings: string[];
+}
+
+export interface SchematicDrawing {
+  index: number;
+  name: string;
+}
+
+export interface SchematicPresetEntry {
+  key: string;
+  label: string;
+  drawings: SchematicDrawing[];
+}
+
+export interface SchematicIndex {
+  presets: SchematicPresetEntry[];
+}
+
 export interface LinkBudgetRequest {
   distance_m: number;
   tx_angle_deg?: number;
@@ -78,10 +119,23 @@ export const api = {
       `/api/standards/${encodeURIComponent(id)}`,
     ),
   validateConfig: (cfg: ConfigDict) =>
-    request<{ valid: boolean; errors: string[]; normalized?: ConfigDict }>(
+    request<ValidateConfigResponse>(
       "/api/config/validate",
       { method: "POST", body: JSON.stringify(cfg) },
     ),
+  listKicadPresets: () =>
+    request<{ presets: string[] }>("/api/kicad/presets"),
+  exportKicad: (preset: string) =>
+    request<KicadExportResult>("/api/kicad/export", {
+      method: "POST",
+      body: JSON.stringify({ preset }),
+    }),
+  kicadDownloadUrl: (preset: string, kind: "sch" | "bom") =>
+    `${getBackendBase()}/api/kicad/download/${encodeURIComponent(preset)}/${kind}`,
+  listSchematics: () =>
+    request<SchematicIndex>("/api/schematic/index"),
+  schematicSvgUrl: (preset: string, drawingIndex: number) =>
+    `${getBackendBase()}/api/schematic/${encodeURIComponent(preset)}/${drawingIndex}`,
   listComponents: () => request<ComponentSummary[]>("/api/components"),
   listComponentCategories: () => request<string[]>("/api/components/categories"),
   getComponent: (part: string) =>

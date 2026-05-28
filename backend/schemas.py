@@ -22,9 +22,39 @@ class PresetSummary(BaseModel):
     data_rate_bps: Optional[float] = None
 
 
+class ValidationIssueModel(BaseModel):
+    level: str            # "error" | "warning" | "info"
+    field: str            # dotted path, e.g. "tx.bias_current_A"
+    message: str
+    suggestion: str = ""
+    rule_id: str = ""
+
+
+class KicadExportRequest(BaseModel):
+    preset: str
+
+
+class KicadExportResponse(BaseModel):
+    preset: str
+    schematic_path: str
+    bom_path: str
+    component_count: int
+    net_count: int
+    warnings: list[str] = Field(default_factory=list)
+
+
+class KicadPresetsResponse(BaseModel):
+    presets: list[str] = Field(default_factory=list)
+
+
 class ConfigValidateResponse(BaseModel):
     valid: bool
     errors: list[str] = Field(default_factory=list)
+    # Structured issues from cosim.validation. Includes ERROR-level entries
+    # (same content as `errors`) plus WARNING and INFO. UIs that want
+    # color-coding / inline placement read `issues`; legacy clients can
+    # still read `errors`.
+    issues: list[ValidationIssueModel] = Field(default_factory=list)
     normalized: Optional[dict[str, Any]] = None
 
 

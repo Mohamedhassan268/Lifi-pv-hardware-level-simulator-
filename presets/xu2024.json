@@ -54,7 +54,7 @@
   "t_stop_s": 0.05,
   "data_rate_bps": 400.0,
   "prbs_order": 7,
-  "n_bits": 20,
+  "n_bits": 200,
 
   "bfsk_f0_hz": 1600.0,
   "bfsk_f1_hz": 2000.0,

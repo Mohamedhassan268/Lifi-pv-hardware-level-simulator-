@@ -20,6 +20,14 @@ PyQt6>=6.6
 # === Schematics ===
 schemdraw>=0.22
 
+# === FEC (LDPC) ===
+# Required by cosim/fec.py for the ieee_802_11bb preset's LDPC 5/6 decoder.
+# Lazy-imported, so the rest of the simulator runs without it, but the
+# 802.11bb pipeline will error out at decode time if it's missing.
+# Install with `pip install pyldpc --no-build-isolation` so pyldpc's setup
+# sees the existing numpy (pyldpc==0.7.9 pulls numba + llvmlite).
+pyldpc>=0.7.9
+
 # === Other ===
 requests>=2.31
 PyYAML>=6.0

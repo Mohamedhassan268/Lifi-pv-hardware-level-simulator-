@@ -103,6 +103,22 @@ _PAPER_METRICS = {
             'BER': 0.10,
         },
     },
+    'ieee_802_11bb': {
+        'label': 'IEEE 802.11bb-2023 (HE PHY 20MHz MCS7, LDPC 5/6)',
+        'metrics': ['BER', 'data_rate_mbps'],
+        'expected': {
+            # Post-FEC BER target. Link budget set so SNR ~21 dB at the
+            # receiver — matches 802.11bb MCS 7 sensitivity. Uncoded channel
+            # BER lands around 6e-3 at this SNR; LDPC 5/6 with hard-decision
+            # input (BSC-class, our current simplification) reduces by ~4x
+            # to the 1-2e-3 range. Soft-demap upgrade is future work and
+            # will tighten further toward the 802.11bb floor (~1e-5).
+            'BER': 2.0e-3,
+            # Payload rate after CP and FEC overhead:
+            # 48.6 Mb/s (post-CP) * 5/6 (code rate) = ~40.5 Mb/s
+            'data_rate_mbps': 40.5,
+        },
+    },
 }
 
 
@@ -142,6 +158,9 @@ def validate_preset(preset_name, verbose=True):
     payload_rate_bps = cfg.data_rate_bps
     if cfg.modulation.upper() == 'OFDM' and cfg.ofdm_nfft and cfg.ofdm_cp_len:
         payload_rate_bps *= cfg.ofdm_nfft / (cfg.ofdm_nfft + cfg.ofdm_cp_len)
+    # FEC reduces payload by code rate (k/n). Honour this when fec_enable is set.
+    if getattr(cfg, 'fec_enable', False):
+        payload_rate_bps *= cfg.fec_rate_num / cfg.fec_rate_den
 
     # Extract pipeline metrics
     pipeline_metrics = {

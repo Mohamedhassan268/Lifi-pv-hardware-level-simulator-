@@ -38,6 +38,12 @@ export interface Waveforms {
   bits_tx: number[];
   bits_rx: number[];
   modulation?: string;
+  // OFDM I/Q constellation (real / imag arrays of equal length).
+  ofdm_iq_real?: number[];
+  ofdm_iq_imag?: number[];
+  // BFSK Goertzel decision-energy plane (one (E0, E1) pair per bit).
+  bfsk_e0?: number[];
+  bfsk_e1?: number[];
 }
 
 interface ResultsState {

@@ -17,10 +17,10 @@ __pycache__/
 CLAUDE.md
 
 # Project files (keep locally, not for GitHub)
-PLAN.md
-PROJECT_SUMMARY.txt
-test_all.py
-test_regex_papers.py
+docs/PLAN.md
+docs/PROJECT_SUMMARY.txt
+tests/test_all.py
+tests/test_regex_papers.py
 git_error.txt
 
 # Workspace output

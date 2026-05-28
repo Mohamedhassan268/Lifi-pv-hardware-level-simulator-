@@ -1,4 +1,4 @@
-// Tauri shell for the LiFi/PV simulator.
+// Tauri shell for OptiSim (LiFi/PV simulator).
 //
 // Lifecycle (matches the migration plan §4):
 //   1. On setup, pick a free local port via portpicker.

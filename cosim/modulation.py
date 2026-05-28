@@ -15,6 +15,8 @@ Usage:
     ber = predict_ber('OOK', snr_linear)
 """
 
+import math
+
 import numpy as np
 from scipy.special import erfc
 from typing import Optional
@@ -165,8 +167,11 @@ def modulate(scheme: str, bits: np.ndarray, t: np.ndarray,
         qam_order = kwargs.get('qam_order', _cfg_val(config, 'ofdm_qam_order', 16))
         n_fft = kwargs.get('n_fft', _cfg_val(config, 'ofdm_nfft', 256))
         cp_len = kwargs.get('cp_len', _cfg_val(config, 'ofdm_cp_len', 32))
+        n_sc = kwargs.get('n_subcarriers',
+                          _cfg_val(config, 'ofdm_n_subcarriers', n_fft // 2 - 1))
+        n_sc = min(n_sc, n_fft // 2 - 1)
         return _modulate_ofdm(bits, t, I_dc, mod_depth, led_eff,
-                              qam_order, n_fft, cp_len)
+                              qam_order, n_fft, cp_len, n_sc)
     elif scheme == 'BFSK':
         f0 = kwargs.get('f0', _cfg_val(config, 'bfsk_f0_hz', 1600.0))
         f1 = kwargs.get('f1', _cfg_val(config, 'bfsk_f1_hz', 2000.0))
@@ -213,9 +218,14 @@ def _modulate_manchester(bits, t, I_dc_mA, mod_depth, led_eff):
 
 
 def _modulate_ofdm(bits, t, I_dc_mA, mod_depth, led_eff,
-                   qam_order, n_fft, cp_len):
-    """DCO-OFDM with Hermitian symmetry."""
-    n_data_carriers = n_fft // 2 - 1
+                   qam_order, n_fft, cp_len, n_subcarriers=None):
+    """DCO-OFDM with Hermitian symmetry.
+
+    n_subcarriers: number of active data carriers (default: n_fft//2 - 1).
+    Must match the demodulator's n_subcarriers so that bits_per_symbol and
+    symbol count are consistent on both ends.
+    """
+    n_data_carriers = min(n_subcarriers, n_fft // 2 - 1) if n_subcarriers else n_fft // 2 - 1
     bps = int(np.log2(qam_order))
     bits_per_symbol = n_data_carriers * bps
     n_symbols = max(1, len(bits) // bits_per_symbol)
@@ -231,10 +241,11 @@ def _modulate_ofdm(bits, t, I_dc_mA, mod_depth, led_eff,
         frame_bits = bits_used[s * bits_per_symbol:(s + 1) * bits_per_symbol]
         qam_syms = _bits_to_qam(frame_bits, qam_order, n_data_carriers)
 
-        # Hermitian symmetry for real-valued output
+        # Hermitian symmetry for real-valued output; place data on carriers
+        # 1..n_data_carriers and mirror on the negative-frequency side.
         freq = np.zeros(n_fft, dtype=complex)
-        freq[1:n_fft // 2] = qam_syms
-        freq[n_fft // 2 + 1:] = np.conj(qam_syms[::-1])
+        freq[1:n_data_carriers + 1] = qam_syms
+        freq[n_fft - n_data_carriers:] = np.conj(qam_syms[::-1])
 
         sig = np.fft.ifft(freq).real
         sig_cp = np.concatenate([sig[-cp_len:], sig])
@@ -247,9 +258,13 @@ def _modulate_ofdm(bits, t, I_dc_mA, mod_depth, led_eff,
     I_tx = I_dc_mA + ofdm_signal * mod_depth * I_dc_mA
     I_tx = np.maximum(I_tx, 0)
 
-    # Interpolate to physics time
-    indices = np.linspace(0, len(I_tx) - 1, len(t))
-    I_tx_interp = np.interp(indices, np.arange(len(I_tx)), I_tx)
+    # Upsample to physics timeline using ideal (FFT-based) resampling so that
+    # subcarrier amplitudes are preserved across the full bandwidth.  Linear
+    # interpolation (np.interp) acts as a triangular low-pass filter that
+    # attenuates high subcarriers by up to ~15%, preventing clean equalization
+    # on the receive side.
+    from scipy.signal import resample as sp_resample
+    I_tx_interp = sp_resample(I_tx, len(t))
     return led_eff * (I_tx_interp * 1e-3)
 
 
@@ -365,6 +380,75 @@ def _qam_demap(symbol, qam_order):
         return [1 if symbol.real > 0 else 0]
 
 
+# Per-QAM-order constellation cache: (points[N], labels[N, bps]).
+# `points` are the complex symbols, `labels` the bit pattern each point
+# encodes — derived by inverting _bits_to_qam so the soft demap matches
+# the hard demap bit-for-bit.
+_QAM_CACHE: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _constellation_for(qam_order: int) -> tuple[np.ndarray, np.ndarray]:
+    cached = _QAM_CACHE.get(qam_order)
+    if cached is not None:
+        return cached
+
+    bps = int(np.log2(qam_order))
+    n_points = qam_order
+    points = np.empty(n_points, dtype=complex)
+    labels = np.empty((n_points, bps), dtype=np.int8)
+    for v in range(n_points):
+        # Enumerate bit pattern MSB-first to match _bits_to_qam input order.
+        bits = np.array([(v >> (bps - 1 - k)) & 1 for k in range(bps)],
+                        dtype=np.int8)
+        # _bits_to_qam yields exactly one symbol for n_carriers=1.
+        sym = _bits_to_qam(bits, qam_order, 1)[0]
+        points[v] = sym
+        labels[v] = bits
+
+    _QAM_CACHE[qam_order] = (points, labels)
+    return points, labels
+
+
+def _qam_demap_soft(symbol: complex, qam_order: int,
+                    n0: float = 1.0) -> list[float]:
+    """Per-bit log-likelihood ratios via max-log-MAP.
+
+    Returns one LLR per bit in the order produced by `_qam_demap`.
+    Sign convention matches pyldpc: positive LLR -> bit=0 is more likely.
+
+    The closed-form QPSK branch is `4*Re/N0/sqrt(2)`-style on the I and Q
+    decisions; larger orders fall through to the min-distance loop over
+    the cached constellation grid.
+    """
+    if qam_order == 4:
+        # Bit ordering: [I, Q] (see _qam_demap). Hard demap reads bit=1 when
+        # Re/Im > 0 (the +1 PAM point). max-log-MAP across the 4-point grid
+        # collapses to L = (min_{bit=1} d² − min_{bit=0} d²)/N0
+        #              = (re − 1/√2)² − (re + 1/√2)²   (Q drops out)
+        #              = −2√2 · Re(y).
+        # Positive LLR => bit 0 more likely (matches pyldpc convention).
+        s2 = np.sqrt(2.0)
+        return [-(2.0 * s2 * symbol.real) / n0,
+                -(2.0 * s2 * symbol.imag) / n0]
+
+    if qam_order in (16, 64):
+        points, labels = _constellation_for(qam_order)
+        # Distance² from y to every constellation point.
+        d2 = np.abs(symbol - points) ** 2
+        bps = labels.shape[1]
+        llrs: list[float] = []
+        for k in range(bps):
+            mask0 = labels[:, k] == 0
+            min_d2_0 = d2[mask0].min()
+            min_d2_1 = d2[~mask0].min()
+            # max-log-MAP: L = (min_{bit=1} d² - min_{bit=0} d²) / N0
+            llrs.append((min_d2_1 - min_d2_0) / n0)
+        return llrs
+
+    # BPSK fallback.
+    return [(2.0 * symbol.real) / n0]
+
+
 # =============================================================================
 # DEMODULATORS
 # =============================================================================
@@ -404,11 +488,15 @@ def demodulate(scheme: str, signal_in: np.ndarray, t: np.ndarray,
         cp_len = kwargs.get('cp_len', _cfg_val(config, 'ofdm_cp_len', 32))
         n_sc = kwargs.get('n_subcarriers', _cfg_val(config, 'ofdm_n_subcarriers', 80))
         n_sc = min(n_sc, n_fft // 2 - 1)
-        return _demodulate_ofdm(signal_in, bits_tx, qam_order, n_fft, cp_len, n_sc)
+        return _demodulate_ofdm(signal_in, bits_tx, qam_order, n_fft, cp_len, n_sc,
+                                symbols_out=kwargs.get('symbols_out'),
+                                llr_out=kwargs.get('llr_out'),
+                                equalizer=kwargs.get('equalizer'))
     elif scheme == 'BFSK':
         f0 = kwargs.get('f0', _cfg_val(config, 'bfsk_f0_hz', 1600.0))
         f1 = kwargs.get('f1', _cfg_val(config, 'bfsk_f1_hz', 2000.0))
-        return _demodulate_bfsk(signal_in, n_bits, sps, f0, f1, fs)
+        return _demodulate_bfsk(signal_in, n_bits, sps, f0, f1, fs,
+                                energies_out=kwargs.get('energies_out'))
     else:
         raise ValueError(f"Unsupported demodulation scheme: {scheme}")
 
@@ -429,12 +517,17 @@ def _demodulate_ook(signal_in, n_bits, sps, fs, data_rate):
     if already_binary:
         V_lpf = signal_in
     else:
-        # HPF to remove DC
+        # HPF to remove DC. Use SOS form — (b, a) polynomial form is
+        # numerically unstable for the very low normalized frequencies that
+        # come from slow data rates against MHz-class sample rates
+        # (e.g. wn ~ 4e-5 for 2.5 kbps @ 1.25 MHz fs). SOS keeps the
+        # filter stable; (b, a) silently returns coefficients that diverge
+        # under filtfilt.
         hpf_cutoff = max(data_rate * 0.01, 10)
         wn_hp = hpf_cutoff / (fs / 2)
         if 0 < wn_hp < 1:
-            b, a = sp_signal.butter(4, wn_hp, btype='high')
-            V_hpf = sp_signal.filtfilt(b, a, signal_in)
+            sos = sp_signal.butter(4, wn_hp, btype='high', output='sos')
+            V_hpf = sp_signal.sosfiltfilt(sos, signal_in)
         else:
             V_hpf = signal_in
 
@@ -442,8 +535,8 @@ def _demodulate_ook(signal_in, n_bits, sps, fs, data_rate):
         lpf_cutoff = min(data_rate * 2, fs * 0.45)
         wn_lp = lpf_cutoff / (fs / 2)
         if 0 < wn_lp < 1:
-            b, a = sp_signal.butter(4, wn_lp, btype='low')
-            V_lpf = sp_signal.filtfilt(b, a, V_hpf)
+            sos = sp_signal.butter(4, wn_lp, btype='low', output='sos')
+            V_lpf = sp_signal.sosfiltfilt(sos, V_hpf)
         else:
             V_lpf = V_hpf
 
@@ -476,20 +569,23 @@ def _demodulate_manchester(signal_in, n_bits, sps, fs, data_rate):
     """Manchester demodulation: compare half-bit energies."""
     from scipy import signal as sp_signal
 
-    # HPF + LPF
+    # HPF + LPF. SOS form — the (b, a) polynomial form silently produces
+    # divergent output under filtfilt for the extreme low normalized
+    # frequencies that come from slow data rates against MHz-class fs
+    # (e.g. wn ~ 4e-5 for 2.5 kbps @ 1.25 MHz). See _demodulate_ook.
     hpf_cutoff = max(data_rate * 0.01, 10)
     wn_hp = hpf_cutoff / (fs / 2)
     if 0 < wn_hp < 1:
-        b, a = sp_signal.butter(4, wn_hp, btype='high')
-        V = sp_signal.filtfilt(b, a, signal_in)
+        sos = sp_signal.butter(4, wn_hp, btype='high', output='sos')
+        V = sp_signal.sosfiltfilt(sos, signal_in)
     else:
         V = signal_in
 
     lpf_cutoff = min(data_rate * 2, fs * 0.45)
     wn_lp = lpf_cutoff / (fs / 2)
     if 0 < wn_lp < 1:
-        b, a = sp_signal.butter(4, wn_lp, btype='low')
-        V = sp_signal.filtfilt(b, a, V)
+        sos = sp_signal.butter(4, wn_lp, btype='low', output='sos')
+        V = sp_signal.sosfiltfilt(sos, V)
 
     bits_rx = np.zeros(n_bits, dtype=int)
     for i in range(n_bits):
@@ -499,25 +595,115 @@ def _demodulate_manchester(signal_in, n_bits, sps, fs, data_rate):
     return bits_rx
 
 
-def _demodulate_ofdm(signal_rx, bits_tx, qam_order, n_fft, cp_len, n_subcarriers):
-    """OFDM demodulation: remove CP, FFT, QAM demap."""
+def _demodulate_ofdm(signal_rx, bits_tx, qam_order, n_fft, cp_len, n_subcarriers,
+                     symbols_out=None, llr_out=None, equalizer=None):
+    """OFDM demodulation: remove CP, FFT, equalize, QAM demap.
+
+    Args:
+        signal_rx: time-domain received signal (real or complex). When fed
+            from the analog RX chain it should be DC-centred (mean removed)
+            before being passed in.
+        equalizer: optional complex array of length ``n_subcarriers`` —
+            ``chain_response_at(cfg, subcarrier_frequencies(...))``. Each
+            FFT bin is divided by the corresponding ``equalizer[k]`` before
+            symbol collection, demap, and N0 estimation, so the channel's
+            frequency-domain shape (LED roll-off, PV RC pole, INA pole,
+            BPF cascade) is undone.
+
+    After equalization a per-run AGC scales all symbols so the average
+    received power matches the constellation's unit grid power. This
+    keeps the I/Q scatter visually anchored to the textbook QAM grid
+    regardless of upstream amplitude (V_rx in volts vs the unit-normalised
+    digital bypass path).
+
+    If `symbols_out` is provided, the equalized + AGC'd complex symbols
+    are appended to it (the natural I/Q constellation for OFDM/QAM).
+
+    If `llr_out` is provided, per-bit LLRs (max-log-MAP, sign convention
+    matching pyldpc: positive => bit 0) are appended. N0 is estimated
+    empirically from the deviation of each received symbol from its
+    nearest constellation point — robust to upstream noise-model changes.
+    """
     sym_len = n_fft + cp_len
     n_symbols = len(signal_rx) // sym_len
 
-    bits_rx = []
+    bits_rx: list[int] = []
+    all_symbols: list[complex] = []
+
+    if equalizer is not None:
+        eq = np.asarray(equalizer, dtype=complex)
+    else:
+        eq = None
+
+    # First pass: collect equalized symbols (don't demap yet — we need
+    # to compute the AGC scale before final symbol values are decided).
+    raw_symbols: list[np.ndarray] = []
     for s in range(n_symbols):
         sym = signal_rx[s * sym_len:(s + 1) * sym_len]
         sig = sym[cp_len:]
         freq = np.fft.fft(sig)
         data_carriers = freq[1:n_fft // 2][:n_subcarriers]
-        for qam_sym in data_carriers:
-            bits_rx.extend(_qam_demap(qam_sym, qam_order))
+        if eq is not None:
+            # Broadcast: eq has length n_subcarriers; data_carriers same.
+            data_carriers = data_carriers / eq[:len(data_carriers)]
+        raw_symbols.append(data_carriers)
+
+    if not raw_symbols:
+        return np.array([], dtype=int)
+
+    all_complex = np.concatenate(raw_symbols)
+
+    # Blind AGC: scale so average power matches the unit constellation.
+    # Constellation has E[|s|²]=1 by construction (see _bits_to_qam).
+    mean_power = float(np.mean(np.abs(all_complex) ** 2))
+    if mean_power > 0:
+        scale = 1.0 / math.sqrt(mean_power)
+    else:
+        scale = 1.0
+    all_complex = all_complex * scale
+
+    # Second pass: demap + LLR + collection.
+    for qam_sym in all_complex:
+        bits_rx.extend(_qam_demap(complex(qam_sym), qam_order))
+        if symbols_out is not None:
+            symbols_out.append(complex(qam_sym))
+        if llr_out is not None:
+            all_symbols.append(complex(qam_sym))
+
+    if llr_out is not None and all_symbols:
+        n0 = _estimate_n0(all_symbols, qam_order)
+        for qam_sym in all_symbols:
+            llr_out.extend(_qam_demap_soft(qam_sym, qam_order, n0))
 
     return np.array(bits_rx[:len(bits_tx)], dtype=int)
 
 
-def _demodulate_bfsk(signal_in, n_bits, sps, f0, f1, fs):
-    """Non-coherent BFSK demodulation using Goertzel energy detection."""
+def _estimate_n0(symbols, qam_order: int) -> float:
+    """Empirical per-real-dimension noise variance from the symbol cloud.
+
+    For each received symbol y, find the nearest constellation point s
+    and accumulate |y-s|^2. Mean over both real dimensions gives an
+    estimate of 2*sigma^2 = N0 (with our normalization E[|s|^2]=1).
+    Clamped to a small positive floor so the LLR division stays finite
+    in the noiseless edge case.
+    """
+    points, _ = _constellation_for(qam_order)
+    err_sq = 0.0
+    for y in symbols:
+        d2 = np.abs(y - points) ** 2
+        err_sq += float(d2.min())
+    mean_err_sq = err_sq / max(len(symbols), 1)
+    return max(mean_err_sq, 1e-12)
+
+
+def _demodulate_bfsk(signal_in, n_bits, sps, f0, f1, fs, energies_out=None):
+    """Non-coherent BFSK demodulation using Goertzel energy detection.
+
+    If `energies_out` is provided, per-bit (E0, E1) pairs are appended.
+    BFSK has no true I/Q constellation (non-coherent), but the (E0, E1)
+    plane is the equivalent decision diagram: bit=0 lands above the
+    diagonal, bit=1 below.
+    """
     bits_rx = np.zeros(n_bits, dtype=int)
     for i in range(n_bits):
         start = i * sps
@@ -527,6 +713,8 @@ def _demodulate_bfsk(signal_in, n_bits, sps, f0, f1, fs):
             continue
         e0 = _goertzel_energy(segment, f0, fs)
         e1 = _goertzel_energy(segment, f1, fs)
+        if energies_out is not None:
+            energies_out.append((float(e0), float(e1)))
         bits_rx[i] = 1 if e1 > e0 else 0
     return bits_rx
 

@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lifi-pv-simulator"
+name = "optisim"
 version = "1.0.0"
-description = "Hardware-faithful component-level simulator for LiFi-PV (SLIPT) systems"
+description = "OptiSim — hardware-faithful component-level simulator for LiFi-PV (SLIPT) systems"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -26,10 +26,10 @@ dev = [
     "pytest>=7.0",
     "pyinstaller>=6.0",
 ]
-all = ["lifi-pv-simulator[gui,dev]"]
+all = ["optisim[gui,dev]"]
 
 [project.scripts]
-lifi-pv = "cli:main"
+optisim = "cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Mohamedhassan268/Lifi-pv-hardware-level-simulator-"

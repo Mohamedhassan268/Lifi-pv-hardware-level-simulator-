@@ -18,7 +18,11 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
 
 ROOT = Path.cwd()  # PyInstaller invokes from repo root
 
@@ -34,6 +38,32 @@ for pkg in ("cosim", "components", "physics", "materials", "systems", "papers"):
 # misses the cffi-built _NgSpiceShared bindings.
 hidden_imports += collect_submodules("PySpice")
 hidden_imports += ["cffi", "_cffi_backend"]
+
+# Phase 8/13: pyldpc + its numba/llvmlite backends for LDPC FEC on the
+# ieee_802_11bb preset. cosim.fec lazy-imports `from pyldpc import ...`,
+# so without explicit hidden-imports the bundled sidecar reports
+# "No module named 'pyldpc'" at decode time. numba/llvmlite ship native
+# .pyd / .dll files that PyInstaller needs collect_dynamic_libs for.
+binaries: list[tuple[str, str]] = []
+for _opt_pkg in ("pyldpc", "numba", "llvmlite"):
+    try:
+        hidden_imports += collect_submodules(_opt_pkg)
+        binaries += collect_dynamic_libs(_opt_pkg)
+    except Exception:
+        # pyldpc / numba aren't strictly required for the rest of the
+        # simulator to boot, so don't break the build if they're absent.
+        pass
+
+# Phase 10: schemdraw drives `/api/schematic/{preset}/{idx}` (Inspector
+# Schematics tab). PyInstaller's static analysis catches `import schemdraw`
+# but can miss the backend module loaded dynamically by Drawing(canvas='svg')
+# at first-use time, causing the bundled sidecar to return 500 with
+# ModuleNotFoundError on /api/schematic/<preset>/<idx>. Collect everything
+# under schemdraw so all backends + element libraries ship.
+try:
+    hidden_imports += collect_submodules("schemdraw")
+except Exception:
+    pass
 
 # Always include uvicorn's lifespan-on / standard websocket implementations.
 hidden_imports += [
@@ -77,7 +107,7 @@ if _ngs_root.exists():
 a = Analysis(
     [str(ROOT / "backend" / "__main__.py")],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hidden_imports,
     hookspath=[],

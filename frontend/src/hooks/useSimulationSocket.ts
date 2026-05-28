@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef } from "react";
 
 import type { ConfigDict } from "@/api/client";
 import { wsUrl } from "@/api/ws";
+import { useMessagesStore } from "@/store/messagesStore";
 import { usePipelineStore, type StepName } from "@/store/pipelineStore";
 import { useResultsStore } from "@/store/resultsStore";
 import {
@@ -81,6 +82,17 @@ export function useSimulationSocket() {
           return;
         }
 
+        // Mirror every WS event into the messages store so the Inspector
+        // can show a live log. Keep summaries short.
+        const append = useMessagesStore.getState().append;
+        append({
+          level: msg.type === "error" ? "error" : "info",
+          source: "ws/pipeline",
+          type: msg.type,
+          message: summarizeMsg(msg),
+          detail: msg,
+        });
+
         switch (msg.type) {
           case "step":
             updateStep(msg.name, {
@@ -117,6 +129,10 @@ export function useSimulationSocket() {
               bits_tx: asNumArray(w.bits_tx),
               bits_rx: asNumArray(w.bits_rx),
               modulation: typeof w.modulation === "string" ? w.modulation : undefined,
+              ofdm_iq_real: w.ofdm_iq_real ? asNumArray(w.ofdm_iq_real) : undefined,
+              ofdm_iq_imag: w.ofdm_iq_imag ? asNumArray(w.ofdm_iq_imag) : undefined,
+              bfsk_e0: w.bfsk_e0 ? asNumArray(w.bfsk_e0) : undefined,
+              bfsk_e1: w.bfsk_e1 ? asNumArray(w.bfsk_e1) : undefined,
             });
             break;
           }
@@ -167,6 +183,35 @@ export function useSimulationSocket() {
   }, [closeSocket, failRun]);
 
   return { runSimulation, cancel };
+}
+
+// One-line summary used by the Inspector messages log.
+function summarizeMsg(msg: ServerMsg): string {
+  switch (msg.type) {
+    case "step":
+      return `${msg.name}: ${msg.status}${msg.message ? ` — ${msg.message}` : ""}`;
+    case "metrics": {
+      const m = msg as Record<string, unknown>;
+      const ber = typeof m.ber === "number" ? m.ber.toExponential(2) : "—";
+      const snr = typeof m.snr_est_dB === "number"
+        ? `${(m.snr_est_dB as number).toFixed(1)} dB`
+        : "—";
+      return `metrics: BER=${ber}, SNR=${snr}`;
+    }
+    case "waveforms": {
+      const w = msg as Record<string, unknown>;
+      const n = Array.isArray(w.time) ? w.time.length : 0;
+      return `waveforms: ${n} samples`;
+    }
+    case "compliance":
+      return `compliance: ${msg.passed ? "PASS" : "FAIL"}`;
+    case "done":
+      return `done (engine=${msg.engine})`;
+    case "error":
+      return `error: ${msg.message}`;
+    default:
+      return "(unknown event)";
+  }
 }
 
 // Narrowing helpers — the backend WS sends loosely-typed JSON, and we'd

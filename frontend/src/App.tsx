@@ -21,6 +21,7 @@ import { DUR, EASE } from "@/lib/motion";
 import { AcRoute } from "@/routes/AcRoute";
 import { BuilderRoute } from "@/routes/BuilderRoute";
 import { EngineRoute } from "@/routes/EngineRoute";
+import { InspectorRoute } from "@/routes/InspectorRoute";
 import { LandingRoute } from "@/routes/LandingRoute";
 import { SetupRoute } from "@/routes/SetupRoute";
 import { SweepsRoute } from "@/routes/SweepsRoute";
@@ -56,6 +57,7 @@ export function App() {
             {route === "sweeps" && <SweepsRoute key="sweeps" />}
             {route === "builder" && <BuilderRoute key="builder" />}
             {route === "ac" && <AcRoute key="ac" />}
+            {route === "inspector" && <InspectorRoute key="inspector" />}
           </AnimatePresence>
         </LayoutGroup>
       </main>

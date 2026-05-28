@@ -42,7 +42,7 @@ from scipy.special import erfc
 
 # Project imports
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cosim.system_config import SystemConfig
 from cosim.python_engine import run_python_simulation

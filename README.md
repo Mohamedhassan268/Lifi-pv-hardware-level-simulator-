@@ -1,4 +1,4 @@
-# Hardware-Faithful LiFi-PV Simulator
+# OptiSim — Hardware-Faithful LiFi/PV Simulator
 
 A component-level, hardware-faithful simulator for **simultaneous light communication and energy harvesting** using photovoltaic (solar) cells. This is a generalized framework that supports multiple receiver architectures, modulation schemes, and paper configurations through a unified dual-engine pipeline.
 

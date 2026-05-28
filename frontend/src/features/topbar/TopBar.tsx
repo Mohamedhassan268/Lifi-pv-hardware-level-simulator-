@@ -2,7 +2,7 @@
  * TopBar — instrument-style header strip. Hidden on the landing route.
  *
  * Layout (left → right):
- *   [logo dot] LiFi/PV Simulator   | preset readout (live config)
+ *   [logo dot] OptiSim   | preset readout (live config)
  *                                  | route buttons (Builder · Sweeps · AC)
  *                                  | Home
  *
@@ -32,7 +32,7 @@ export function TopBar() {
       >
         <span className="inline-block h-1.5 w-1.5 bg-beam-400" />
         <span className="text-[12px] font-semibold tracking-wide text-slate-100">
-          LiFi/PV Simulator
+          OptiSim
         </span>
       </button>
 
@@ -51,6 +51,7 @@ export function TopBar() {
         <RouteTab label="Engine" active={route === "engine"} onClick={() => setRoute("engine")} />
         <RouteTab label="Sweeps" active={route === "sweeps"} onClick={() => setRoute("sweeps")} />
         <RouteTab label="AC" active={route === "ac"} onClick={() => setRoute("ac")} />
+        <RouteTab label="Inspector" active={route === "inspector"} onClick={() => setRoute("inspector")} />
       </div>
 
       <div className="flex items-center border-l border-hair px-2 py-1.5">

@@ -29,7 +29,6 @@ from cosim.channel import OpticalChannel
 from cosim.noise import NoiseModel, K_BOLTZMANN, Q_ELECTRON
 from cosim.modulation import (
     modulate, demodulate, calculate_ber,
-    generate_ofdm_digital,
     # Re-export BER functions for backward compatibility
     predict_ber_ook, predict_ber_ook_db, predict_ber_bpsk,
     predict_ber_bfsk, predict_ber_mqam,
@@ -175,6 +174,19 @@ def run_python_simulation(config, bits_override=None,
         if cfg.random_seed is not None:
             np.random.seed(cfg.random_seed)
         bits_tx = np.random.randint(0, 2, n_bits)
+
+    # ========== FEC: encode (optional) ==========
+    # When fec_enable is set, cfg.n_bits is the *message* bit budget; the
+    # encoded bit count expands by n/k. We rebuild timing arrays around the
+    # coded length so the modulator still sees a contiguous bit stream.
+    from cosim.fec import build_fec_codec
+    fec = build_fec_codec(cfg)
+    bits_tx_msg = bits_tx                       # preserved for post-decode BER
+    if fec is not None:
+        bits_tx = fec.encode(bits_tx_msg)       # coded bits go on the wire
+        n_bits = len(bits_tx)
+        n_samples = n_bits * samples_per_bit
+        t = np.arange(n_samples) * dt
 
     # ========== TX: Modulate ==========
     P_tx = modulate(mod_scheme, bits_tx, t, config=cfg)
@@ -328,39 +340,75 @@ def run_python_simulation(config, bits_override=None,
 
     # ========== Demodulation ==========
     if mod_scheme == 'OFDM':
-        # OFDM uses digital-domain coherent demodulation.
-        # The OFDM TX waveform is dimensionless (normalized); we apply the
-        # physical SNR from the link budget by scaling noise to match the
-        # signal's electrical SNR at the receiver.
+        # Phase 14: OFDM consumes the actual chain output V_rx (DC-centred),
+        # rather than bypassing with a matched-SNR AWGN on a digital twin.
+        # All physical noise (shot/thermal/ambient/amp) is already in I_ph
+        # and flowed naturally into V_rx; LED bandwidth and PV-cap RC pole
+        # colour each subcarrier per the chain transfer function H(f), which
+        # the equalizer divides out per-bin.
+        from cosim.ofdm_equalizer import (
+            chain_response_at,
+            subcarrier_frequencies,
+        )
+        from scipy.signal import resample as sp_resample
+
         n_data = cfg.ofdm_nfft // 2 - 1
         n_sc = min(cfg.ofdm_n_subcarriers, n_data)
 
-        ofdm_tx_signal = generate_ofdm_digital(
-            bits_tx, cfg.ofdm_qam_order, cfg.ofdm_nfft, cfg.ofdm_cp_len, n_sc)
+        # Centre V_rx at zero (the chain output has a large DC component
+        # from the bias photocurrent that must not enter the FFT bins).
+        V_rx_ac = np.asarray(V_rx, dtype=float) - float(np.mean(V_rx))
 
-        if cfg.noise_enable:
-            # Physical SNR: (signal current)^2 / (noise current std)^2
-            # Signal current ~ R * mean(P_rx) (photocurrent swing)
-            I_signal = rx.R * np.mean(P_rx)
-            sigma_I = noise_model.total_noise_std(np.mean(I_ph), bandwidth)
-            if sigma_I > 0 and I_signal > 0:
-                snr_linear = (I_signal / sigma_I) ** 2
-            else:
-                snr_linear = 1e12
-            # Scale noise to match SNR relative to OFDM signal power
-            signal_power = np.var(ofdm_tx_signal)
-            noise_power = signal_power / max(snr_linear, 1e-12)
-            noise_std = np.sqrt(noise_power)
-            ofdm_rx_signal = ofdm_tx_signal + np.random.normal(
-                0, noise_std, len(ofdm_tx_signal))
+        # ADC: resample from the physics rate (data_rate × SAMPLES_PER_BIT)
+        # down to the OFDM digital rate.  The TX modulator (_modulate_ofdm)
+        # uses n_sc carriers (not n_data) to compute n_symbols, so we must
+        # match that here to get the same sample count after resampling.
+        bps_ofdm = int(np.log2(cfg.ofdm_qam_order))
+        n_ofdm_tx_syms = max(1, len(bits_tx) // (n_sc * bps_ofdm))
+        sym_len_ofdm = cfg.ofdm_nfft + cfg.ofdm_cp_len
+        n_ofdm_samples = n_ofdm_tx_syms * sym_len_ofdm
+        V_rx_ofdm = sp_resample(V_rx_ac, n_ofdm_samples)
+
+        # OFDM digital sample rate: always derive from n_ofdm_samples and the
+        # physics window duration.  The modulator used this implicit rate when
+        # it stretched the OFDM signal to the physics timeline, so the same
+        # rate gives the correct subcarrier-to-Hz mapping for the equalizer.
+        fs_ofdm = n_ofdm_samples / (n_samples * dt)
+
+        # Equalizer: only apply when the chain has actual frequency-selective
+        # components implemented in the time-domain simulation.  For the
+        # 'direct' topology V_rx = I_ph × R_sense (scalar, no RC filter
+        # coded in the sim), so the chain is flat and equalization is a no-op
+        # that would otherwise introduce phantom phase rotation.  Non-direct
+        # topologies run through the ReceiverChain which does apply filters.
+        topology = getattr(cfg, 'rx_topology', 'direct')
+        if topology != 'direct':
+            sc_freqs = subcarrier_frequencies(fs_ofdm, cfg.ofdm_nfft, n_sc)
+            equalizer = chain_response_at(cfg, sc_freqs)
         else:
-            ofdm_rx_signal = ofdm_tx_signal
+            equalizer = None
 
-        # Channel gain is absorbed (ZF equalization): pass through directly.
-        bits_rx = demodulate('OFDM', ofdm_rx_signal, t, n_bits,
-                             config=cfg, bits_tx=bits_tx)
+        t_ofdm = np.arange(n_ofdm_samples) * (1.0 / fs_ofdm)
+
+        ofdm_symbols: list = []
+        bfsk_energies: list = []
+        # Soft-demap LLRs only when FEC is going to decode them — avoids
+        # the per-bit constellation distance loop on runs that won't use it.
+        ofdm_llrs: list = [] if fec is not None else None
+        bits_rx = demodulate('OFDM', V_rx_ofdm, t_ofdm, n_bits,
+                             config=cfg, bits_tx=bits_tx,
+                             symbols_out=ofdm_symbols,
+                             llr_out=ofdm_llrs,
+                             equalizer=equalizer)
     else:
-        bits_rx = demodulate(mod_scheme, V_rx, t, n_bits, config=cfg)
+        ofdm_symbols = []
+        bfsk_energies = []
+        ofdm_llrs = None
+        if mod_scheme.upper() == 'BFSK':
+            bits_rx = demodulate(mod_scheme, V_rx, t, n_bits, config=cfg,
+                                 energies_out=bfsk_energies)
+        else:
+            bits_rx = demodulate(mod_scheme, V_rx, t, n_bits, config=cfg)
 
     # ========== DC-DC Converter (Phase 2) ==========
     dcdc_result = None
@@ -371,8 +419,32 @@ def run_python_simulation(config, bits_override=None,
             dcdc = BoostConverter.from_config(cfg)
             dcdc_result = dcdc.compute(V_in=V_cell_avg, V_out_target=cfg.vcc_volts)
 
+    # ========== FEC: decode (optional) ==========
+    # When FEC is active, bits_rx is the channel's coded output; decode it
+    # back to message bits and run BER on the (message_tx, message_rx) pair.
+    # The pre-FEC channel BER is preserved on the result dict as 'ber_uncoded'
+    # for diagnostics.
+    ber_uncoded = None
+    if fec is not None:
+        ber_uncoded = calculate_ber(bits_tx, bits_rx)['ber']
+        # Prefer soft demap when LLRs are available (OFDM only). Hard-bit
+        # fallback (decode_bits + fixed-SNR fake LLRs) stays for non-OFDM
+        # FEC users; semantics are identical when fec_decode_snr_db is set
+        # to whatever the user had before.
+        if ofdm_llrs:
+            llr_arr = np.asarray(ofdm_llrs, dtype=float)
+            # Truncate the LLR stream to the multiple-of-n length the
+            # decoder consumes — matches the hard-bit path's behaviour.
+            n_used = (len(llr_arr) // fec.codeword_length) * fec.codeword_length
+            bits_rx = fec.decode_llrs(llr_arr[:n_used])
+        else:
+            bits_rx = fec.decode_bits(bits_rx, snr_db=cfg.fec_decode_snr_db)
+        bits_tx = bits_tx_msg                   # report message-bit pair upstream
+
     # ========== BER calculation ==========
     ber_result = calculate_ber(bits_tx, bits_rx)
+    if ber_uncoded is not None:
+        ber_result['ber_uncoded'] = ber_uncoded
 
     # SNR — link-budget number (closed-form, includes ALL modelled sources).
     # Previously this only summed the six AWGN variances, which made the
@@ -434,6 +506,13 @@ def run_python_simulation(config, bits_override=None,
         'channel_gain': channel.channel_gain(),
         'P_rx_avg_uW': np.mean(P_rx) * 1e6,
         'I_ph_avg_uA': np.mean(I_ph) * 1e6,
+        # Constellation payload — see ConstellationPanel.tsx.
+        # OFDM: list of complex post-FFT data-carrier symbols (I/Q).
+        # BFSK: list of (E0, E1) Goertzel-energy pairs per bit.
+        'ofdm_symbols': ofdm_symbols,
+        'bfsk_energies': bfsk_energies,
+        # Pre-FEC channel BER (None when FEC is disabled). See Phase 8/13.
+        'ber_uncoded': ber_uncoded,
     }
 
     # Phase 2: Add per-node waveforms when enhanced models are active

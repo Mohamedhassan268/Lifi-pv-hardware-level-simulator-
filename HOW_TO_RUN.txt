@@ -1,0 +1,145 @@
+==============================================================================
+ OptiSim — How To Run (command cheat sheet)
+==============================================================================
+Hardware-faithful LiFi/PV simulator.
+
+This file lists every command needed to run the project, so you don't have to
+hunt for them. If you're brand new: read "0. ONE-TIME SETUP" first, then go to
+"1. RUN ON LOCALHOST".
+
+All commands are written for Windows PowerShell, run from the repo root:
+    d:\Projects\hardware_faithful_simulator
+
+Two ways to run OptiSim:
+  - LOCALHOST (dev mode)  -> backend + browser UI. Best for development.
+  - DESKTOP APP (.exe)    -> a single OptiSim window (Tauri). Best for "just use it".
+
+Quick map of the pieces:
+  - Backend  = Python FastAPI server (the simulation core)  -> port 8000
+  - Frontend = React/Vite web UI                            -> port 5173
+  - .venv    = the Python virtual environment with all deps
+
+
+==============================================================================
+ 0. ONE-TIME SETUP  (only needed once per machine, or after a fresh clone)
+==============================================================================
+
+# --- Python side ---
+# Create the virtual environment (if .venv does not already exist):
+python -m venv .venv
+
+# Install the simulation core dependencies:
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Install the backend (web API) dependencies — REQUIRED for localhost/.exe:
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+
+# --- Frontend side ---
+# Install the UI dependencies (creates frontend\node_modules):
+cd frontend
+npm install
+cd ..
+
+# Requires: Python 3.10+, Node.js (v24 confirmed working).
+
+
+==============================================================================
+ 1. RUN ON LOCALHOST  (development mode — backend + browser)
+==============================================================================
+You need TWO things running at the same time: the backend, then the frontend.
+
+# ---- STEP 1: Start the backend (FastAPI) on port 8000 ----
+.venv\Scripts\python.exe -m uvicorn backend.app:app --host 127.0.0.1 --port 8000
+
+#   Add --reload during development to auto-restart on code changes:
+#   .venv\Scripts\python.exe -m uvicorn backend.app:app --reload --port 8000
+
+# ---- STEP 2: In a SECOND terminal, start the frontend (Vite) ----
+cd frontend
+npm run dev
+
+# ---- STEP 3: Open the UI in your browser ----
+#   Frontend (the app):   http://localhost:5173/
+#   Backend health check: http://127.0.0.1:8000/health   -> {"status":"ok"}
+#   Backend API docs:     http://127.0.0.1:8000/docs
+
+# ---- TO STOP ----
+#   Press Ctrl+C in each terminal. Or kill the ports:
+#   Get-NetTCPConnection -LocalPort 8000,5173 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+
+
+==============================================================================
+ 2. RUN THE DESKTOP APP (.exe)  — Tauri
+==============================================================================
+The desktop app bundles the backend as a "sidecar" .exe and shows one window.
+
+  -- Option A: Dev mode (live, no installer; opens the app window) --
+cd frontend
+npm run tauri:dev
+
+  -- Option B: Build a real installer / standalone .exe --
+
+# STEP 1: Build the backend into a single .exe (the "sidecar").
+#   NOTE: the build script expects the venv folder named "venv" (not ".venv").
+#   If your env is ".venv", either edit scripts\build-sidecar.ps1 line 18,
+#   or build it directly with the command below.
+.\scripts\build-sidecar.ps1
+
+#   ...or build the sidecar directly without the script:
+.venv\Scripts\python.exe -m pip install "pyinstaller>=6.5"
+.venv\Scripts\python.exe -m PyInstaller backend\lifi-backend.spec --clean --noconfirm
+#   Output: dist\lifi-backend.exe
+#   Tauri expects it copied here (target triple in the name):
+#     frontend\src-tauri\binaries\lifi-backend-x86_64-pc-windows-msvc.exe
+
+# STEP 2: Build the desktop installer + .exe.
+cd frontend
+npm run tauri:build
+
+# WHERE THE BUILT FILES LAND:
+#   App .exe   : frontend\src-tauri\target\release\OptiSim.exe
+#   Installers : frontend\src-tauri\target\release\bundle\
+#                (e.g. \msi\OptiSim_0.1.0_x64_en-US.msi  and  \nsis\*-setup.exe)
+
+
+==============================================================================
+ 3. USEFUL CLI COMMANDS  (no web UI — pure terminal, uses .venv)
+==============================================================================
+.venv\Scripts\python.exe cli.py test                 # run module self-tests
+.venv\Scripts\python.exe cli.py gui                  # launch the legacy PyQt6 desktop GUI
+.venv\Scripts\python.exe cli.py validate             # generate all paper figures
+.venv\Scripts\python.exe cli.py validate kadirvelu2021   # one paper
+.venv\Scripts\python.exe cli.py pipeline --preset kadirvelu2021           # full co-sim (SPICE)
+.venv\Scripts\python.exe cli.py pipeline --preset kadirvelu2021 --engine python   # no SPICE needed
+.venv\Scripts\python.exe cli.py compare              # presets vs paper targets
+.venv\Scripts\python.exe cli.py components           # list all 14 components
+.venv\Scripts\python.exe cli.py presets              # list available presets
+.venv\Scripts\python.exe cli.py ltspice              # check SPICE engine status
+
+
+==============================================================================
+ 4. TROUBLESHOOTING
+==============================================================================
+* "No module named 'uvicorn'" (or fastapi):
+    -> Backend deps not installed. Run the backend install from section 0:
+       .venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+
+* Browser UI loads but shows errors / no data:
+    -> The backend isn't running. Start it (section 1, step 1) and confirm
+       http://127.0.0.1:8000/health returns {"status":"ok"}.
+
+* "Port 8000 (or 5173) already in use":
+    -> An old server is still running. Free the port:
+       Get-NetTCPConnection -LocalPort 8000 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+
+* Frontend won't start / "vite not found":
+    -> Run "npm install" inside the frontend folder (section 0).
+
+* SPICE not found when running pipeline:
+    -> That's fine — the simulator auto-falls back to the Python engine.
+       Or pass --engine python explicitly.
+
+* venv path confusion:
+    -> This repo uses ".venv". The build-sidecar.ps1 script references "venv".
+       Use the explicit ".venv\Scripts\python.exe ..." commands above to be safe.
+==============================================================================

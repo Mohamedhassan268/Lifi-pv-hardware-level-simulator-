@@ -251,6 +251,11 @@ def cmd_pipeline(args):
     if args.tstop:
         cfg.t_stop_s = args.tstop
 
+    if not _preflight_validate(cfg):
+        print("\nABORT: configuration has ERROR-level issues. "
+              "Run `python cli.py validate-config --preset " + preset + "` for details.")
+        sys.exit(1)
+
     sm = SessionManager()
     session = sm.create_session(label=preset)
     sm.save_config(session, cfg)
@@ -285,6 +290,49 @@ def cmd_presets(args):
         for name in SystemConfig.list_presets():
             cfg = SystemConfig.from_preset(name)
             print(f"  {name:20s}  {cfg.paper_reference or '(no reference)'}")
+
+
+def _preflight_validate(cfg, *, strict_warnings: bool = False) -> bool:
+    """Run validator on a config and print issues. Returns True if OK to run."""
+    from cosim.validation import format_issues, has_errors, IssueLevel
+    issues = cfg.validate()
+    if not issues:
+        return True
+    print(format_issues(issues))
+    if has_errors(issues):
+        return False
+    if strict_warnings and any(i.level == IssueLevel.WARNING for i in issues):
+        return False
+    return True
+
+
+def cmd_validate_config(args):
+    """Check one or all presets for parameter issues."""
+    from cosim.system_config import SystemConfig
+    from cosim.validation import format_issues, has_errors, IssueLevel
+
+    if args.preset:
+        names = [args.preset]
+    else:
+        names = SystemConfig.list_presets()
+
+    exit_code = 0
+    for name in names:
+        _header(f"VALIDATE-CONFIG: {name}")
+        try:
+            cfg = SystemConfig.from_preset(name)
+        except Exception as exc:
+            print(f"ERROR   load: {exc}")
+            exit_code = 1
+            continue
+        issues = cfg.validate()
+        print(format_issues(issues))
+        if has_errors(issues):
+            exit_code = 1
+        elif args.strict and any(i.level == IssueLevel.WARNING for i in issues):
+            exit_code = 1
+        print()
+    sys.exit(exit_code)
 
 
 def cmd_validate(args):
@@ -338,7 +386,7 @@ def cmd_compare(args):
 
 def cmd_sensitivity(args):
     """Run parameter sensitivity analysis."""
-    from sensitivity_analysis import run_sensitivity_analysis
+    from scripts.sensitivity_analysis import run_sensitivity_analysis
 
     presets = [args.preset] if args.preset else None
     _header("SENSITIVITY ANALYSIS")
@@ -524,6 +572,13 @@ def build_parser():
     ps = sub.add_parser('presets', help='List/inspect presets')
     ps.add_argument('name', nargs='?', help='Preset to inspect')
 
+    # validate-config
+    vc = sub.add_parser('validate-config',
+                        help='Check a preset (or all) for parameter issues')
+    vc.add_argument('--preset', help='Preset name (default: all)')
+    vc.add_argument('--strict', action='store_true',
+                    help='Exit non-zero on WARNING as well as ERROR')
+
     # kicad
     kc = sub.add_parser('kicad', help='Export KiCad schematic + BOM for a preset')
     kc.add_argument('--preset', help='Preset name (default: all registered)')
@@ -591,6 +646,7 @@ def main():
         'gui':        cmd_gui,
         'pipeline':   cmd_pipeline,
         'presets':    cmd_presets,
+        'validate-config': cmd_validate_config,
         'kicad':      cmd_kicad,
         'ltspice':    cmd_ltspice,
         'validate':   cmd_validate,
