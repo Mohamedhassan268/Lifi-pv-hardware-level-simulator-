@@ -58,7 +58,7 @@
       }
     },
     "security": {
-      "csp": "default-src 'self' tauri: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* tauri://localhost"
+      "csp": "default-src 'self' tauri: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* tauri://localhost; img-src 'self' data: blob: http://127.0.0.1:*"
     },
     "windows": [
       {
