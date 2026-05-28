@@ -30,6 +30,7 @@ interface ConfigState {
   error: string | null;
 
   loadPreset: (name: string) => Promise<void>;
+  loadDefaults: () => Promise<void>;
   patch: (changes: Partial<ConfigDict>) => void;
   reset: () => void;
 
@@ -52,6 +53,19 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     try {
       const cfg = await api.getPreset(name);
       set({ presetName: name, config: cfg, loading: false });
+    } catch (e) {
+      set({ loading: false, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  async loadDefaults() {
+    // "Build your own" starts from the backend's default SystemConfig so the
+    // builder opens with sane values to tweak, not blank fields. The validate
+    // endpoint echoes a fully-normalized config in `normalized`.
+    set({ loading: true, error: null });
+    try {
+      const r = await api.validateConfig({});
+      set({ presetName: null, config: r.normalized ?? {}, loading: false });
     } catch (e) {
       set({ loading: false, error: e instanceof Error ? e.message : String(e) });
     }

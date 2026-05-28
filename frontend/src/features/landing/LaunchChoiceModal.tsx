@@ -45,6 +45,7 @@ interface LaunchChoiceModalProps {
 
 export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
   const loadPreset = useConfigStore((s) => s.loadPreset);
+  const loadDefaults = useConfigStore((s) => s.loadDefaults);
   const resetWorkspace = useBuilderUIStore((s) => s.resetWorkspace);
   const markAllConfigured = useBuilderUIStore((s) => s.markAllConfigured);
   const setRoute = useUIStore((s) => s.setRoute);
@@ -83,10 +84,17 @@ export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  const onChooseOwn = () => {
-    resetWorkspace();
-    onClose();
-    setRoute("builder");
+  const onChooseOwn = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      resetWorkspace();
+      await loadDefaults();
+      onClose();
+      setRoute("builder");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const onPickPreset = async (name: string) => {
