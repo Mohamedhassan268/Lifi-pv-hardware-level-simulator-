@@ -191,20 +191,24 @@ def _cfg_val(config, attr: str, default):
 # =============================================================================
 
 def _modulate_ook(bits, t, I_dc_mA, mod_depth, led_eff):
-    """OOK modulation: P_tx = η · (I_dc + m·I_dc·d(t))."""
+    """OOK modulation: P_tx = η · I_dc · (1 + m·(d(t) − 0.5)).
+
+    The modulation is centred so the average optical power equals I_dc
+    (the radiated power), with peak-to-peak AC swing m·I_dc.
+    """
     sps = len(t) // len(bits)
     d = np.repeat(bits.astype(float), sps)[:len(t)]
-    I_tx_mA = I_dc_mA + mod_depth * I_dc_mA * d
+    I_tx_mA = I_dc_mA * (1.0 + mod_depth * (d - 0.5))
     return led_eff * (I_tx_mA * 1e-3)
 
 
 def _modulate_manchester(bits, t, I_dc_mA, mod_depth, led_eff):
-    """Manchester-encoded OOK."""
+    """Manchester-encoded OOK (centred; average optical power = I_dc)."""
     sps = len(t) // len(bits)
     symbols = manchester_encode(bits)
     sps_sym = sps // 2
     d = np.repeat(symbols.astype(float), sps_sym)[:len(t)]
-    I_tx_mA = I_dc_mA + mod_depth * I_dc_mA * d
+    I_tx_mA = I_dc_mA * (1.0 + mod_depth * (d - 0.5))
     return led_eff * (I_tx_mA * 1e-3)
 
 
