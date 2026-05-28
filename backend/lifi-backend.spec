@@ -65,6 +65,15 @@ try:
 except Exception:
     pass
 
+# schemdraw exports SVG via matplotlib's SVG backend (Drawing.get_imagedata
+# ("svg")). matplotlib loads backends dynamically by name, so PyInstaller's
+# static analysis misses them and the frozen sidecar raises
+# "No module named 'matplotlib.backends.backend_svg'" on every schematic.
+hidden_imports += [
+    "matplotlib.backends.backend_svg",
+    "matplotlib.backends.backend_agg",
+]
+
 # Always include uvicorn's lifespan-on / standard websocket implementations.
 hidden_imports += [
     "uvicorn.lifespan.on",
