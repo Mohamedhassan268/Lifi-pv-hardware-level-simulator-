@@ -132,7 +132,9 @@ export function ProbesTab() {
             {
               x: waveforms.time,
               y: series ?? [],
-              type: "scattergl",
+              // SVG scatter (not scattergl): the packaged WebView2 has no
+              // WebGL, and a few-thousand-point trace renders fine in SVG.
+              type: "scatter",
               mode: "lines",
               line: { color: "#7dd3fc", width: 1 },
               hoverinfo: "x+y",
