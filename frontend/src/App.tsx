@@ -16,11 +16,13 @@ import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
 import { useEffect, useState } from "react";
 
 import { waitForBackend } from "@/api/backend";
+import { FormToggle } from "@/features/topbar/FormToggle";
 import { TopBar } from "@/features/topbar/TopBar";
 import { DUR, EASE } from "@/lib/motion";
 import { AcRoute } from "@/routes/AcRoute";
 import { BuilderRoute } from "@/routes/BuilderRoute";
 import { EngineRoute } from "@/routes/EngineRoute";
+import { SchematicRoute } from "@/routes/SchematicRoute";
 import { InspectorRoute } from "@/routes/InspectorRoute";
 import { LandingRoute } from "@/routes/LandingRoute";
 import { SetupRoute } from "@/routes/SetupRoute";
@@ -48,7 +50,8 @@ export function App() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
       {route !== "landing" && <TopBar />}
-      <main className="flex-1">
+      <main className="relative flex-1">
+        <FormToggle />
         <LayoutGroup>
           <AnimatePresence mode="wait">
             {route === "landing" && <LandingRoute key="landing" />}
@@ -56,6 +59,7 @@ export function App() {
             {route === "engine" && <EngineRoute key="engine" />}
             {route === "sweeps" && <SweepsRoute key="sweeps" />}
             {route === "builder" && <BuilderRoute key="builder" />}
+            {route === "schematic" && <SchematicRoute key="schematic" />}
             {route === "ac" && <AcRoute key="ac" />}
             {route === "inspector" && <InspectorRoute key="inspector" />}
           </AnimatePresence>

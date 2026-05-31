@@ -17,6 +17,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from components.pins import Port, OPAMP_PORTS
 from utils.constants import K_B
 
 
@@ -69,6 +70,11 @@ class ComparatorBase(ABC):
     @abstractmethod
     def get_parameters(self) -> Dict[str, Any]:
         pass
+
+    def spice_ports(self):
+        """Structured SPICE port list. A push-pull comparator shares the
+        single-supply op-amp port set: INP INN OUT VCC VEE."""
+        return list(OPAMP_PORTS)
 
     def max_toggle_frequency(self) -> float:
         """

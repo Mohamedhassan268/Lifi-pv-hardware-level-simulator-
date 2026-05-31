@@ -89,17 +89,25 @@ export interface LinkBudgetResponse {
 
 export interface ComponentSummary {
   part: string;
+  display_name?: string;
   category: string;
   class: string;
   config_field: string;
 }
 
+export interface SpicePort {
+  name: string;
+  role: string;
+}
+
 export interface ComponentDetail {
   part: string;
+  display_name?: string;
   class: string;
   category: string;
   config_field: string;
   parameters: Record<string, unknown>;
+  spice_ports?: SpicePort[];
 }
 
 export interface StandardsProfileSummary {
@@ -145,4 +153,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(req),
     }),
+  simulateSchematic: (graph: unknown) =>
+    request<SchematicSimResponse>("/api/schematic-sim", {
+      method: "POST",
+      body: JSON.stringify(graph),
+    }),
 };
+
+export interface SchematicSimResponse {
+  ber: number | null;
+  ber_incircuit?: number | null;
+  n_bits?: number;
+  message?: string;
+  warnings?: string[];
+  diagnostics?: Record<string, unknown>;
+}

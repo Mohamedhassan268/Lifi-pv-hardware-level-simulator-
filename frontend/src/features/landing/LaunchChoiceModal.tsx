@@ -23,6 +23,7 @@ import { DUR, EASE } from "@/lib/motion";
 import { Button } from "@/primitives/Button";
 import { useBuilderUIStore } from "@/store/builderUIStore";
 import { useConfigStore } from "@/store/configStore";
+import { useSchematicStore } from "@/store/schematicStore";
 import { useUIStore } from "@/store/uiStore";
 
 const PRESET_BLURBS: Record<string, string> = {
@@ -36,7 +37,8 @@ const PRESET_BLURBS: Record<string, string> = {
   lifi_poc_breadboard: "LiFi PoC breadboard — practical bench setup",
 };
 
-type Step = "choose" | "preset";
+type Step = "start" | "form" | "preset";
+type Form = "schematic" | "block" | "both";
 
 interface LaunchChoiceModalProps {
   open: boolean;
@@ -48,9 +50,11 @@ export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
   const loadDefaults = useConfigStore((s) => s.loadDefaults);
   const resetWorkspace = useBuilderUIStore((s) => s.resetWorkspace);
   const markAllConfigured = useBuilderUIStore((s) => s.markAllConfigured);
+  const clearSchematic = useSchematicStore((s) => s.clear);
   const setRoute = useUIStore((s) => s.setRoute);
+  const setForms = useUIStore((s) => s.setForms);
 
-  const [step, setStep] = useState<Step>("choose");
+  const [step, setStep] = useState<Step>("start");
   const [presets, setPresets] = useState<string[] | null>(null);
   const [presetsError, setPresetsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,7 +62,7 @@ export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
   // Reset to step 1 every time the modal opens.
   useEffect(() => {
     if (open) {
-      setStep("choose");
+      setStep("start");
       setPresetsError(null);
     }
   }, [open]);
@@ -84,25 +88,35 @@ export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  const onChooseOwn = async () => {
+  // New project: start empty in the chosen form(s).
+  const onChooseForm = async (form: Form) => {
     if (loading) return;
     setLoading(true);
     try {
-      resetWorkspace();
-      await loadDefaults();
+      const schematic = form === "schematic" || form === "both";
+      const block = form === "block" || form === "both";
+      setForms({ schematic, block });
+      if (block) {
+        resetWorkspace();
+        await loadDefaults();
+      }
+      if (schematic) clearSchematic();
       onClose();
-      setRoute("builder");
+      setRoute(block ? "builder" : "schematic");
     } finally {
       setLoading(false);
     }
   };
 
+  // Open project: a research preset IS the project. Presets configure the
+  // block diagram; open both forms so the user can toggle.
   const onPickPreset = async (name: string) => {
     if (loading) return;
     setLoading(true);
     try {
       await loadPreset(name);
       markAllConfigured();
+      setForms({ schematic: true, block: true });
       onClose();
       setRoute("builder");
     } finally {
@@ -136,18 +150,27 @@ export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
             aria-modal="true"
             aria-labelledby="launch-choice-title"
           >
-            {step === "choose" ? (
-              <ChooseStep
-                onPreset={() => setStep("preset")}
-                onOwn={onChooseOwn}
+            {step === "start" && (
+              <StartStep
+                onNew={() => setStep("form")}
+                onOpen={() => setStep("preset")}
                 onClose={onClose}
               />
-            ) : (
+            )}
+            {step === "form" && (
+              <FormStep
+                loading={loading}
+                onPick={onChooseForm}
+                onBack={() => setStep("start")}
+                onClose={onClose}
+              />
+            )}
+            {step === "preset" && (
               <PresetStep
                 presets={presets}
                 error={presetsError}
                 loading={loading}
-                onBack={() => setStep("choose")}
+                onBack={() => setStep("start")}
                 onPick={onPickPreset}
                 onClose={onClose}
               />
@@ -159,13 +182,13 @@ export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
   );
 }
 
-function ChooseStep({
-  onPreset,
-  onOwn,
+function StartStep({
+  onNew,
+  onOpen,
   onClose,
 }: {
-  onPreset: () => void;
-  onOwn: () => void;
+  onNew: () => void;
+  onOpen: () => void;
   onClose: () => void;
 }) {
   return (
@@ -173,10 +196,10 @@ function ChooseStep({
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 id="launch-choice-title" className="text-lg font-semibold">
-            How would you like to start?
+            Start a project
           </h2>
           <p className="mt-1 text-xs text-slate-400">
-            Load a published research configuration, or build a system from scratch.
+            Create a new project, or open a published research configuration.
           </p>
         </div>
         <CloseButton onClick={onClose} />
@@ -185,19 +208,81 @@ function ChooseStep({
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <GateCard
           accent="beam"
-          title="Use a preset"
-          body="Reproduce a published paper's setup. All four categories are populated and lit up immediately."
-          cta="Browse presets →"
-          onClick={onPreset}
+          title="New project"
+          body="Start from scratch. Next you'll choose whether to build it as a schematic, a system block diagram, or both."
+          cta="Choose a form →"
+          onClick={onNew}
         />
         <GateCard
           accent="harvest"
-          title="Build your own system"
-          body="Start with an empty workspace and configure Transmitter, Receiver, Geometry, and Noise yourself."
-          cta="Open empty builder →"
-          onClick={onOwn}
+          title="Open project"
+          body="Open a published paper's configuration (Kadirvelu, Sarwar, Xu, …) with all categories populated."
+          cta="Browse projects →"
+          onClick={onOpen}
         />
       </div>
+    </div>
+  );
+}
+
+function FormStep({
+  loading,
+  onPick,
+  onBack,
+  onClose,
+}: {
+  loading: boolean;
+  onPick: (f: Form) => void;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="p-6">
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h2 id="launch-choice-title" className="text-lg font-semibold">
+            How do you want to build it?
+          </h2>
+          <p className="mt-1 text-xs text-slate-400">
+            Pick a schematic, a system block diagram, or both — you can toggle
+            between them later.
+          </p>
+        </div>
+        <CloseButton onClick={onClose} />
+      </header>
+
+      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <GateCard
+          accent="beam"
+          title="Schematic"
+          body="Draw the full circuit — parts, wires, SPICE."
+          cta="Open editor →"
+          onClick={() => !loading && onPick("schematic")}
+        />
+        <GateCard
+          accent="harvest"
+          title="Block diagram"
+          body="The TX → Channel → RX system view."
+          cta="Open builder →"
+          onClick={() => !loading && onPick("block")}
+        />
+        <GateCard
+          accent="beam"
+          title="Both"
+          body="Build in both and toggle between them."
+          cta="Open both →"
+          onClick={() => !loading && onPick("both")}
+        />
+      </div>
+
+      <footer className="mt-4 flex justify-between">
+        <Button variant="ghost" onClick={onBack} disabled={loading}>
+          ← Back
+        </Button>
+        <span className="self-center text-[11px] text-slate-500">
+          {loading ? "Opening…" : "Pick how you'd like to work"}
+        </span>
+      </footer>
     </div>
   );
 }
@@ -222,10 +307,10 @@ function PresetStep({
       <header className="flex items-start justify-between gap-4">
         <div>
           <h2 id="launch-choice-title" className="text-lg font-semibold">
-            Pick a preset
+            Open a project
           </h2>
           <p className="mt-1 text-xs text-slate-400">
-            Each preset reproduces a published paper's experimental setup.
+            Each project reproduces a published paper's experimental setup.
           </p>
         </div>
         <CloseButton onClick={onClose} />

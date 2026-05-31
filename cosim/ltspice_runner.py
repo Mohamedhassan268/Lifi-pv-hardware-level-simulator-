@@ -96,28 +96,90 @@ class LTSpiceRunner:
             if p.exists():
                 p.unlink()
 
-        cmd = [str(self.exe), '-Run', '-b', str(cir_path)]
+        # LTspice is single-instance: a leftover/wedged batch worker from a prior
+        # run makes a new '-b' invocation hand off and exit without producing a
+        # .raw (the cause of intermittent "no engine" failures). Clearing strays
+        # first guarantees every run starts from the clean state that always
+        # succeeds. (Trade-off: also closes an interactive LTspice GUI, which is
+        # acceptable for a simulation backend.)
+        self._kill_stray_workers()
 
+        # '-b' is LTspice's self-contained batch mode (runs then exits). '-Run'
+        # is a GUI flag; combining it can hand the job to a resident GUI
+        # instance that exits without producing a .raw, so we use '-b' alone.
+        cmd = [str(self.exe), '-b', str(cir_path)]
+
+        # Use Popen so a hung/slow LTspice can be force-killed on timeout. On
+        # Windows subprocess.run(timeout=) can leave the child alive; a lingering
+        # batch process blocks the next run (LTspice is single-instance).
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                timeout=timeout_s,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 cwd=str(cir_path.parent),
             )
+        except (OSError, PermissionError):
+            self._last_log = ''
+            self._last_raw = ''
+            return False
+
+        try:
+            proc.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.communicate(timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
             self._last_log = ''
             self._last_raw = ''
             return False
-        except (OSError, PermissionError) as e:
-            self._last_log = ''
-            self._last_raw = ''
-            return False
+
+        # On Windows the LTspice '-b' launcher spawns a worker and the parent
+        # exits almost immediately, so communicate() returning does NOT mean the
+        # simulation is done. Wait (up to timeout_s) for the .raw to appear AND
+        # stop growing (write complete) before declaring success/failure. If the
+        # deadline passes (a wedged solve never stabilises), kill any stray
+        # LTspice worker by name so it can't poison the next run.
+        deadline = _time.time() + timeout_s
+        last_size = -1
+        stable_count = 0
+        completed = False
+        while _time.time() < deadline:
+            if raw_path.exists():
+                size = raw_path.stat().st_size
+                if size > 0 and size == last_size:
+                    stable_count += 1
+                    if stable_count >= 3:  # size unchanged ~0.3 s -> flushed
+                        completed = True
+                        break
+                else:
+                    stable_count = 0
+                last_size = size
+            _time.sleep(0.1)
+
+        if not completed:
+            self._kill_stray_workers()
 
         self._last_raw = str(raw_path) if raw_path.exists() else ''
         self._last_log = str(log_path) if log_path.exists() else ''
 
-        return raw_path.exists()
+        return completed and raw_path.exists()
+
+    @staticmethod
+    def _kill_stray_workers() -> None:
+        """Force-kill any LTspice processes (the '-b' worker detaches from the
+        launcher we spawned, so proc.kill() can't reach a wedged solve)."""
+        import sys
+        if sys.platform != 'win32':
+            return
+        for name in ('XVIIx64.exe', 'LTspice.exe', 'ngspice.exe'):
+            try:
+                subprocess.run(['taskkill', '/F', '/IM', name],
+                               capture_output=True, timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
 
     def run_transient(self, cir_path, timeout_s: float = 120) -> bool:
         """Run transient analysis. Alias for run()."""

@@ -26,6 +26,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from components.base import AmplifierBase
+from components.pins import Port, PortRole, OPAMP_PORTS
 from utils.constants import K_B, ROOM_TEMPERATURE_K
 
 
@@ -160,17 +161,19 @@ class INA322(AmplifierBase):
         return f"""\
 * INA322 Instrumentation Amplifier - Behavioral Model
 * Gain = {gain:.1f} ({self.voltage_gain_dB:.1f} dB), GBW = {self._gbw_Hz/1e3:.0f} kHz
-.SUBCKT INA322 INP INN OUT VCC VEE
+.SUBCKT INA322 INP INN OUT VCC VEE REF
 * INP = non-inverting input
 * INN = inverting input
 * OUT = output
 * VCC, VEE = supply rails
+* REF = reference (output level-shift, e.g. mid-rail for single supply)
 
 * High input impedance
 Rinp INP 0 1G
 Rinn INN 0 1G
+Rref REF 0 1G
 
-* Differential gain stage
+* Differential gain stage (output referenced to REF)
 Ediff diff_int 0 INP INN {gain}
 
 * Two-pole GBW limiting
@@ -179,10 +182,14 @@ Cp1 p1 0 {1/(2*np.pi*f0*1e3):.6e}
 Rp2 p1 p2 1k
 Cp2 p2 0 {1/(2*np.pi*f1*1e3):.6e}
 
-* Output buffer with rail clamping
-Bout OUT 0 V = max(min(V(p2), V(VCC)-{self._output_swing_margin}), V(VEE)+{self._output_swing_margin})
+* Output buffer with rail clamping (shifted by REF)
+Bout OUT 0 V = max(min(V(p2)+V(REF), V(VCC)-{self._output_swing_margin}), V(VEE)+{self._output_swing_margin})
 
 .ENDS INA322"""
+
+    def spice_ports(self):
+        """INA322 adds a REF pin to the standard op-amp port set."""
+        return list(OPAMP_PORTS) + [Port("REF", PortRole.REF)]
 
     def get_parameters(self) -> Dict[str, Any]:
         """Return all simulation parameters."""

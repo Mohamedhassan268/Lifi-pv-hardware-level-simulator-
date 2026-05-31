@@ -95,8 +95,8 @@ class KXOB25_04X3F(PhotodetectorBase):
         # MEASURED/FITTED PARAMETERS (from papers)
         # -----------------------------------------------------------------
         self._responsivity_530nm = 0.457     # A/W @ 530nm (Correa 2025)
-        self._junction_capacitance_pF = 798  # pF total (Correa 2025)
-        self._shunt_resistance_ohm = 138.8   # Ω (Correa 2025)
+        self._junction_capacitance_nF = 798.0  # nF total (Kadirvelu 2021; paper states nF)
+        self._shunt_resistance_ohm = 138.8e3   # 138.8 kΩ (Kadirvelu 2021)
         self._series_resistance_ohm = 2.5    # Ω estimated
         self._dark_current_nA = 50.0         # nA estimated from I-V
         
@@ -133,7 +133,7 @@ class KXOB25_04X3F(PhotodetectorBase):
     @property
     def capacitance(self) -> float:
         """Junction capacitance in Farads."""
-        return self._junction_capacitance_pF * 1e-12
+        return self._junction_capacitance_nF * 1e-9
     
     @property
     def dark_current(self) -> float:
@@ -323,7 +323,7 @@ class KXOB25_04X3F(PhotodetectorBase):
     
     def __repr__(self):
         return (f"KXOB25_04X3F(R={self.responsivity:.3f}A/W, "
-                f"C={self.capacitance*1e12:.0f}pF, "
+                f"C={self.capacitance*1e9:.1f}nF, "
                 f"BW@220Ω={self.bandwidth(220)/1e3:.1f}kHz)")
 
 
@@ -577,10 +577,10 @@ if __name__ == "__main__":
     print("\n--- VALIDATION AGAINST CORREA 2025 ---")
     print(f"  Target R:    0.457 A/W  | Model: {kxob.responsivity:.3f} A/W | "
           f"{'✓' if abs(kxob.responsivity - 0.457) < 0.01 else '✗'}")
-    print(f"  Target C:    798 pF     | Model: {kxob.capacitance*1e12:.0f} pF | "
-          f"{'✓' if abs(kxob.capacitance*1e12 - 798) < 50 else '✗'}")
-    print(f"  Target R_sh: 138.8 Ω    | Model: {kxob.shunt_resistance:.1f} Ω | "
-          f"{'✓' if abs(kxob.shunt_resistance - 138.8) < 5 else '✗'}")
+    print(f"  Target C:    798 nF     | Model: {kxob.capacitance*1e9:.1f} nF | "
+          f"{'✓' if abs(kxob.capacitance*1e9 - 798) < 50 else '✗'}")
+    print(f"  Target R_sh: 138.8 kΩ   | Model: {kxob.shunt_resistance/1e3:.1f} kΩ | "
+          f"{'✓' if abs(kxob.shunt_resistance/1e3 - 138.8) < 5 else '✗'}")
     
     # Test bandwidth matches paper
     f_paper = 14e3  # ~14 kHz from paper

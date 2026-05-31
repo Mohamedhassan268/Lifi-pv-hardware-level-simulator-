@@ -1,6 +1,6 @@
 # Project Status — Hardware-Faithful LiFi/PV Simulator
 
-**Last updated:** 2026-05-27
+**Last updated:** 2026-05-31
 
 ---
 
@@ -187,6 +187,80 @@ New runtime dependency: `pyldpc==0.7.9` (pulls `numba`, `llvmlite`). Install
 into the project venv with `--no-build-isolation` so pyldpc's setup sees
 the existing numpy. The dependency is lazy-imported in `cosim/fec.py` so
 the rest of the simulator runs without it installed.
+
+### Phase 15 — Component-driven sim + drag-and-drop schematic editor (2026-05-30 → 2026-05-31)
+
+Two threads landed this block. **All work is currently UNCOMMITTED** (large
+working-tree diff across ~25 files, 6 new). Validation gate held throughout:
+`cli.py compare` **8/8 PASS**, `cli.py test` **14/14**, frontend `tsc`/`vite
+build` clean.
+
+**Thread A — component objects now drive the simulation** (committed-quality,
+verified):
+- The pipeline RX subcircuits now source their parameters from the selected
+  datasheet component objects instead of raw config numbers:
+  `_subckt_ina` ← `INA322.voltage_gain/gain_bandwidth_product`,
+  `_subckt_comparator` ← `TLV7011.propagation_delay_s`,
+  `_subckt_solar_cell` ← the photodetector's `responsivity/capacitance/
+  shunt/series` (via a new `_rx_component(part)` helper in `cosim/pipeline.py`).
+  Unknown parts fall back to config. Kadirvelu BER unchanged (1.2e-3, the
+  values matched).
+- TX DC optical power now sourced from the LED component
+  (`LXM5_PD01.radiated_power_at_operating_point()`).
+- **Unit bug fixed:** `components/solar_cells.py` KXOB25 had junction
+  capacitance `798 pF` and shunt `138.8 Ω` — both 1000× off the paper-canonical
+  `798 nF` / `138.8 kΩ` (confirmed against `papers/kadirvelu_2021.py` and the
+  `# paper says nF!` note in `systems/kadirvelu2021.py`). Corrected.
+
+**Thread B — drag-and-drop schematic editor** (functional, with one honest gap):
+- New EDA-style editor on the **"Schematic"** TopBar tab (React Flow v12):
+  `frontend/src/features/schematic/` (Palette, PartNode with role-based pin
+  handles, SchematicWorkspace, presets, symbols) + `store/schematicStore.ts`
+  (union-find net resolver → CircuitGraph JSON) + `routes/SchematicRoute.tsx`.
+- **Per-component SPICE pin model:** `components/pins.py` (`Port`, `PortRole`);
+  `spice_ports()` on amp/comparator/photodetector/LED/MOSFET base classes,
+  reconciled to match each `.SUBCKT` header. Exposed via `/api/components/{part}`.
+- **Wireable subcircuits added** to photodetector / LED / MOSFET base classes
+  (previously `.MODEL`-only): `spice_subcircuit()` with named ports
+  (anode/cathode/photo_in; anode/cathode; drain/gate/source). SPICE-validated.
+- **INA322 hardened** with a REF pin (datasheet-correct) so it level-shifts
+  correctly under arbitrary single-supply wiring, not just the pipeline topology.
+- **Friendly display names** (`/api/components` `display_name`: "Instrumentation
+  Amp", "Photodiode", …) with the part code kept searchable; **schematic symbols**
+  per category (`symbols.tsx`); **Output**/**Ground** label terminals (named-net
+  markers, no SPICE element).
+- **graph → SPICE netlist** generator (`cosim/graph_netlist.py`), **ERC**
+  (`cosim/erc.py` — floating pins, no ground/supply → 422), and
+  **`POST /api/schematic-sim`** endpoint (`backend/routers/schematic_sim.py`).
+- **Engine: schematic-sim runs in-process via libngspice (PySpice)**, not LTspice
+  subprocess. `cosim/pyspice_graph_runner.py`. Reason: LTspice batch mode
+  **nondeterministically hangs** on the behavioral component subcircuits (~30%
+  of runs spin to 1000s+ CPU; same deck solves in ~2 s the rest of the time —
+  unfixable from Python). libngspice is in-process, killable, deterministic
+  (~3 s/run), and is what the `.exe` already bundles. This **solved the
+  stability blocker.** (Also hardened `cosim/ltspice_runner.py` along the way:
+  pre-run stray-process kill, `.raw` flush poll, Popen+kill timeout — and fixed
+  that `ltspice_timeout_s` was silently dropped because it isn't a SystemConfig
+  field.)
+
+**Open gap (Thread B):** the example breadboard preset *loads, wires, and
+simulates* (real libngspice, real node voltages) but **does not produce a
+correct BER** (~0.5). Root-caused through the full chain: (a) sim window must
+cover the scored bits [fixed], (b) the PV needs a harvest return path to ground
+[the freeform preset omitted it], (c) the INA output swing is small on a large
+DC offset with no AC-coupling/BPF stage, and (d) **Kadirvelu is Manchester-coded
+OOK**, which the simple bit-center slicer in `calculate_ber_from_transient`
+cannot demodulate. A freeform preset that *truly closes the link* needs real
+analog design (gain/bias/AC-coupling) **plus** a demodulator matched to the
+modulation — substantially more than a preset drop. The editor + engine + ERC +
+round-trip are correct; the "honest BER from an arbitrary user circuit" is the
+remaining work. Decision pending on scope (commit wins + report node-voltages
+vs. invest in one fully-demodulating preset).
+
+Not yet done from the agreed plan: React Flow `ConnectionMode.Loose` (so
+target↔target pins render — some preset edges currently drop); the dual-engine
+**TX SPICE deck** (LED+MOSFET driver → I(LED) → Python channel → RX) and the
+single-canvas TX→Channel-bridge→RX layout.
 
 ---
 

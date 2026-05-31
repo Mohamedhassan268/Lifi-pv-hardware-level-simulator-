@@ -19,6 +19,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from components.pins import Port, PortRole
 
 
 # =============================================================================
@@ -91,6 +92,56 @@ class MOSFETBase(ABC):
         P_sw = 0.5 * V_ds * I_d * (t_rise + t_fall) * f_sw
         """
         return 0.5 * V_ds * I_d * (t_rise + t_fall) * f_sw
+
+    def spice_ports(self):
+        """SPICE port list: drain, gate, source (MOSFET terminal order)."""
+        return [
+            Port("drain", PortRole.SIGNAL_OUT),
+            Port("gate", PortRole.SIGNAL_IN),
+            Port("source", PortRole.SIGNAL),
+        ]
+
+    def spice_subcircuit(self) -> str:
+        """Wrap the MOSFET .MODEL in a 3-pin subcircuit (drain gate source),
+        so it can be placed and wired. Uses the part's ``spice_model_string()``
+        when available; the device letter (M) and channel polarity come from
+        the model.
+
+        ngspice's level-1 MOSFET has no ``CGS``/``CGD``/``CBD`` model params
+        (its terminal caps are the per-metre overlap caps ``CGSO``/``CGDO``),
+        so it rejects the datasheet-derived cap params that ``spice_model_string``
+        carries for the (more lenient) LTspice path. We pull those cap values out
+        of the model body and re-emit them as explicit capacitors across the real
+        terminals — ngspice-clean and the exact datasheet pF values are preserved
+        as physical elements. ``spice_model_string`` itself is left untouched.
+        """
+        import re
+        name = self.name.upper().replace('-', '_')
+        polarity = "NMOS" if self.channel_type == "N" else "PMOS"
+        model_name = f"{name}_M"
+        if hasattr(self, 'spice_model_string'):
+            after = self.spice_model_string().split(f"{polarity}(", 1)
+            body = after[1] if len(after) == 2 else f"VTO={self.vgs_threshold} KP=150m)"
+        else:
+            body = f"VTO={self.vgs_threshold} KP=150m)"
+
+        # Lift CGS/CGD/CBD out of the model body into explicit terminal caps.
+        cap_terms = {'CGS': ('gate', 'source', 'Cgs'), 'CGD': ('gate', 'drain', 'Cgd'),
+                     'CBD': ('drain', 'source', 'Cds')}
+        cap_lines = []
+        for pname, (a, b, ref) in cap_terms.items():
+            m = re.search(rf"\b{pname}=([0-9.]+[a-zA-Z]*)", body)
+            if m:
+                cap_lines.append(f"{ref} {a} {b} {m.group(1)}")
+                body = re.sub(rf"\s*\b{pname}=[0-9.]+[a-zA-Z]*", "", body)
+        model_line = f".MODEL {model_name} {polarity}({body}"
+        caps = ("\n".join(cap_lines) + "\n") if cap_lines else ""
+        return f"""\
+* {self.name} MOSFET - 3-pin subcircuit (drain gate source)
+.SUBCKT {name} drain gate source
+M1 drain gate source source {model_name} W=1m L=1u
+{caps}{model_line}
+.ENDS {name}"""
 
 
 # =============================================================================

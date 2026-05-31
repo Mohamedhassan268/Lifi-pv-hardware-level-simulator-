@@ -13,15 +13,32 @@ export type Route =
   | "engine"
   | "sweeps"
   | "builder"
+  | "schematic"
   | "ac"
   | "inspector";
+
+/**
+ * The form(s) a project is built/viewed in: a schematic (the circuit editor)
+ * and/or a block diagram (the TX → Channel → RX builder). The onboarding flow
+ * sets these; when both are enabled the workspace shows a toggle between them
+ * and the TopBar filters its Builder/Schematic tabs to match.
+ */
+export interface ProjectForms {
+  schematic: boolean;
+  block: boolean;
+}
 
 interface UIState {
   route: Route;
   setRoute: (r: Route) => void;
+  forms: ProjectForms;
+  setForms: (f: ProjectForms) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
   route: "landing",
   setRoute: (r) => set({ route: r }),
+  // Default to both enabled so every form is reachable until a project picks.
+  forms: { schematic: true, block: true },
+  setForms: (f) => set({ forms: f }),
 }));

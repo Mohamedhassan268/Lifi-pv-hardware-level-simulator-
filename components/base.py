@@ -18,12 +18,13 @@ Design Principle:
 import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.constants import Q, K_B, HC_EV_NM, ROOM_TEMPERATURE_K
+from components.pins import Port, PortRole, OPAMP_PORTS
 
 
 # =============================================================================
@@ -201,16 +202,51 @@ class PhotodetectorBase(ABC):
     def photocurrent(self, P_optical: float) -> float:
         """
         Calculate photocurrent for given optical power.
-        
+
         I_ph = R × P_opt
-        
+
         Args:
             P_optical: Optical power in Watts
-            
+
         Returns:
             Photocurrent in Amperes
         """
         return self.responsivity * P_optical
+
+    def spice_ports(self) -> List[Port]:
+        """SPICE port list: anode, cathode, and a behavioral optical input
+        (a voltage node whose value, in W, drives the photocurrent source)."""
+        return [
+            Port("anode", PortRole.SIGNAL_OUT),
+            Port("cathode", PortRole.SIGNAL),
+            Port("photo_in", PortRole.OPTICAL_IN),
+        ]
+
+    def spice_subcircuit(self) -> str:
+        """Behavioral photodetector subcircuit (Iph || Cj || Rsh || diode, Rs
+        in series), parameterised from this part's datasheet values. Node order
+        matches spice_ports(): anode cathode photo_in.
+
+        Gph converts optical power on `photo_in` (V == W) into photocurrent via
+        the responsivity; the diode/Cj/Rsh model the junction. This is the same
+        topology the pipeline uses for the solar cell, generalised to any
+        photodetector part.
+        """
+        name = self.name.upper().replace('-', '_')
+        R_lambda = self.responsivity
+        Cj = self.capacitance
+        Rsh = self.shunt_resistance
+        Rs = self.series_resistance
+        return f"""\
+* {self.name} photodetector - behavioral model
+.SUBCKT {name} anode cathode photo_in
+Gph cathode anode_int VALUE = {{V(photo_in) * {R_lambda}}}
+Rs anode_int anode {Rs}
+Cj anode_int cathode {Cj:.6e}
+Rsh anode_int cathode {Rsh:.1f}
+D1 anode_int cathode {name}_D
+.MODEL {name}_D D(IS=1e-10 N=1.5 RS=0.01)
+.ENDS {name}"""
 
 
 # =============================================================================
@@ -374,11 +410,42 @@ class LEDBase(ABC):
         """
         P_opt = self.optical_power(I_drive)
         P_elec = I_drive * self.forward_voltage
-        
+
         if P_elec <= 0:
             return 0.0
-        
+
         return P_opt / P_elec
+
+    def spice_ports(self) -> List[Port]:
+        """SPICE port list for an LED used as a 2-terminal diode."""
+        return [
+            Port("anode", PortRole.SIGNAL_IN),
+            Port("cathode", PortRole.SIGNAL),
+        ]
+
+    def spice_subcircuit(self) -> str:
+        """Wrap the LED's diode .MODEL in a 2-pin subcircuit (anode cathode),
+        so it can be placed and wired like any other part. Uses the part's
+        ``spice_model_string()`` when available; otherwise a generic diode.
+        """
+        name = self.name.upper().replace('-', '_')
+        if hasattr(self, 'spice_model_string'):
+            model = self.spice_model_string()
+            # Re-key the .MODEL name to <NAME>_D for a stable internal ref.
+            model_name = f"{name}_D"
+            # spice_model_string emits ".MODEL <something> D(...)"; swap the name.
+            after = model.split('D(', 1)
+            model_line = f".MODEL {model_name} D({after[1]}" if len(after) == 2 else \
+                f".MODEL {model_name} D(IS=1e-18 N=2.5 RS=1)"
+        else:
+            model_name = f"{name}_D"
+            model_line = f".MODEL {model_name} D(IS=1e-18 N=2.5 RS=1)"
+        return f"""\
+* {self.name} LED - diode model wrapped as 2-pin subcircuit
+.SUBCKT {name} anode cathode
+D1 anode cathode {model_name}
+{model_line}
+.ENDS {name}"""
 
 
 # =============================================================================
@@ -448,11 +515,20 @@ class AmplifierBase(ABC):
     def get_parameters(self) -> Dict[str, Any]:
         """Return all simulation parameters."""
         pass
-    
+
+    def spice_ports(self) -> List[Port]:
+        """Structured SPICE port list (name + role), in subcircuit order.
+
+        Default is a single-supply op-amp: INP INN OUT VCC VEE. Parts whose
+        ``spice_subcircuit()`` exposes extra ports (e.g. an instrumentation
+        amplifier's REF) override this.
+        """
+        return list(OPAMP_PORTS)
+
     # -------------------------------------------------------------------------
     # Common Calculations
     # -------------------------------------------------------------------------
-    
+
     def tia_bandwidth(self, C_photodiode: float) -> float:
         """
         Calculate TIA bandwidth with photodiode.

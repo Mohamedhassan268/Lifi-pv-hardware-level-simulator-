@@ -17,6 +17,7 @@ import { useUIStore } from "@/store/uiStore";
 export function TopBar() {
   const route = useUIStore((s) => s.route);
   const setRoute = useUIStore((s) => s.setRoute);
+  const forms = useUIStore((s) => s.forms);
   const presetName = useConfigStore((s) => s.presetName);
 
   return (
@@ -46,7 +47,12 @@ export function TopBar() {
       <span className="flex-1" />
 
       <div className="flex items-center gap-1 px-2 py-1.5">
-        <RouteTab label="Builder" active={route === "builder"} onClick={() => setRoute("builder")} />
+        {forms.block && (
+          <RouteTab label="Builder" active={route === "builder"} onClick={() => setRoute("builder")} />
+        )}
+        {forms.schematic && (
+          <RouteTab label="Schematic" active={route === "schematic"} onClick={() => setRoute("schematic")} />
+        )}
         <RouteTab label="Setup" active={route === "setup"} onClick={() => setRoute("setup")} />
         <RouteTab label="Engine" active={route === "engine"} onClick={() => setRoute("engine")} />
         <RouteTab label="Sweeps" active={route === "sweeps"} onClick={() => setRoute("sweeps")} />

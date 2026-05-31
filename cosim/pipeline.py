@@ -52,6 +52,22 @@ logger = logging.getLogger(__name__)
 _SAMPLES_PER_BIT = 100
 
 
+def _rx_component(part):
+    """Return a component instance for `part`, or None if unknown/unavailable.
+
+    Lets RX subcircuits derive their parameters from the selected datasheet
+    part (closing the component -> netlist loop), while falling back to
+    SystemConfig values for parts not in the component library.
+    """
+    if not part or part == 'N/A':
+        return None
+    try:
+        from components import get_component
+        return get_component(part)
+    except KeyError:
+        return None
+
+
 class StepResult:
     """Result of a single pipeline step."""
 
@@ -143,8 +159,17 @@ class SimulationPipeline:
             bits = np.random.randint(0, 2, cfg.n_bits)
             self._tx_bits = bits
 
+            # Source DC optical power from the selected LED component when the
+            # part is in the library (closing the component -> TX loop); fall
+            # back to the configured radiated power otherwise.
+            led = _rx_component(getattr(cfg, 'led_part', None))
+            if led is not None and hasattr(led, 'radiated_power_at_operating_point'):
+                P_led_mW = led.radiated_power_at_operating_point() * 1e3
+            else:
+                P_led_mW = cfg.led_radiated_power_mW
+
             # Modulate using unified dispatch (supports all 5 schemes)
-            P_tx = modulate(mod_scheme, bits, time_arr, config=cfg)
+            P_tx = modulate(mod_scheme, bits, time_arr, config=cfg, P_led_mW=P_led_mW)
             self._time = time_arr
             self._P_tx = P_tx
 
@@ -153,7 +178,7 @@ class SimulationPipeline:
             from .pwl_writer import write_voltage_pwl
             write_voltage_pwl(time_arr, P_tx, tx_pwl_path)
 
-            P_dc = cfg.led_radiated_power_mW * 1e-3
+            P_dc = P_led_mW * 1e-3
             self.step_tx.status = 'done'
             self.step_tx.duration_s = _time.time() - t0
             self.step_tx.message = (
@@ -300,10 +325,13 @@ class SimulationPipeline:
 
             if self.ltspice.available:
                 self._notify('RX', 'running', 'Running LTspice...')
-                # Timeout pulled from config (default 600 s). Default 120 s
-                # was fine for cfg.t_stop_s <= 5 ms but starves on the
-                # boost-converter switching at 50 ms+ windows.
-                _lt_timeout = getattr(cfg, 'ltspice_timeout_s', 600.0)
+                # Timeout: a pipeline-level override wins (set by callers like the
+                # schematic endpoint that want a short fail-fast cap), else config,
+                # else 600 s. ltspice_timeout_s is not a SystemConfig field, so a
+                # plain attribute on the pipeline is the reliable channel.
+                _lt_timeout = getattr(self, 'ltspice_timeout_s', None)
+                if _lt_timeout is None:
+                    _lt_timeout = getattr(cfg, 'ltspice_timeout_s', 600.0)
                 ok = self.ltspice.run_transient(str(cir_path), timeout_s=_lt_timeout)
                 if ok:
                     sim_engine = 'LTspice'
@@ -727,11 +755,24 @@ class SimulationPipeline:
 
     @staticmethod
     def _subckt_solar_cell(cfg) -> str:
-        """Generate SOLAR_CELL subcircuit from SystemConfig fields."""
-        Cj = cfg.sc_cj_nF * 1e-9
-        Rsh = cfg.sc_rsh_kOhm * 1e3
-        R_lambda = cfg.sc_responsivity
-        Rs = getattr(cfg, 'pv_series_resistance_ohm', 2.5)
+        """Generate SOLAR_CELL subcircuit.
+
+        Responsivity, junction capacitance, shunt and series resistance are
+        sourced from the selected photodetector component (cfg.pv_part) when
+        available, so the netlist reflects the actual datasheet part; falls
+        back to SystemConfig values otherwise.
+        """
+        comp = _rx_component(getattr(cfg, 'pv_part', None))
+        if comp is not None:
+            R_lambda = comp.responsivity
+            Cj = comp.capacitance
+            Rsh = comp.shunt_resistance
+            Rs = comp.series_resistance
+        else:
+            Cj = cfg.sc_cj_nF * 1e-9
+            Rsh = cfg.sc_rsh_kOhm * 1e3
+            R_lambda = cfg.sc_responsivity
+            Rs = getattr(cfg, 'pv_series_resistance_ohm', 2.5)
         return f"""\
 .SUBCKT SOLAR_CELL anode cathode photo_in
 Gph cathode anode_int VALUE = {{V(photo_in) * {R_lambda}}}
@@ -745,9 +786,19 @@ D1 anode_int cathode SOLAR_D
 
     @staticmethod
     def _subckt_ina(cfg) -> str:
-        """Generate INA subcircuit from SystemConfig fields."""
-        gain = 10 ** (cfg.ina_gain_dB / 20)
-        gbw = cfg.ina_gbw_kHz * 1e3
+        """Generate INA subcircuit.
+
+        Gain and GBW are sourced from the selected amplifier component
+        (cfg.ina_part) when available, so the netlist reflects the actual
+        datasheet part; falls back to SystemConfig values otherwise.
+        """
+        comp = _rx_component(getattr(cfg, 'ina_part', None))
+        if comp is not None and hasattr(comp, 'voltage_gain'):
+            gain = comp.voltage_gain
+            gbw = comp.gain_bandwidth_product
+        else:
+            gain = 10 ** (cfg.ina_gain_dB / 20)
+            gbw = cfg.ina_gbw_kHz * 1e3
         f_3dB = gbw / gain
         f_p2 = f_3dB * 10
         C_p1 = 1 / (2 * np.pi * f_3dB * 1e3)
@@ -789,8 +840,16 @@ Bout_oa out 0 V = {{MAX(MIN(V(oa_pole), V(vcc)-0.02), V(vee)+0.02)}}
 
     @staticmethod
     def _subckt_comparator(cfg) -> str:
-        """Generate COMPARATOR subcircuit from SystemConfig fields."""
-        delay_ns = getattr(cfg, 'comparator_prop_delay_ns', 260.0)
+        """Generate COMPARATOR subcircuit.
+
+        Propagation delay is sourced from the selected comparator component
+        (cfg.comparator_part) when available; falls back to SystemConfig.
+        """
+        comp = _rx_component(getattr(cfg, 'comparator_part', None))
+        if comp is not None and hasattr(comp, 'propagation_delay_s'):
+            delay_ns = comp.propagation_delay_s * 1e9
+        else:
+            delay_ns = getattr(cfg, 'comparator_prop_delay_ns', 260.0)
         C_del = delay_ns  # pF with 1k resistor gives tau = delay_ns
         return f"""\
 .SUBCKT COMPARATOR INP INN OUT VCC VEE
@@ -862,18 +921,44 @@ Rload vout gnd {Rload:.0f}
         if cfg.dcdc_enable:
             subckt_defs += '\n' + self._subckt_dcdc(cfg)
 
+        # Extra subcircuit definitions injected for a user-drawn circuit (the
+        # schematic editor supplies the .SUBCKT bodies for whatever parts were
+        # placed, e.g. BPW34 / BSD235N).
+        extra_defs = getattr(self, 'rx_subckt_defs_override', None)
+        if extra_defs:
+            subckt_defs += '\n' + extra_defs
+
         # Build data path based on topology
         data_path_lines = []
-        data_path_lines.append('* --- Solar Cell ---')
-        data_path_lines.append('Xsc sc_anode sc_cathode optical_power SOLAR_CELL')
-        data_path_lines.append('')
-        data_path_lines.append(f'* --- Current Sense Resistor ---')
-        data_path_lines.append(f'Rsense sc_cathode sense_lo {cfg.r_sense_ohm}')
-        data_path_lines.append('')
-        data_path_lines.append('* --- Ground reference ---')
-        data_path_lines.append('Vgnd_ref sense_lo 0 DC 0')
+        # Optional generalised hand-off: when OPTISIM_GRAPH_NETLIST=1, emit the
+        # ina_bpf_comp RX chain from a CircuitGraph instead of the hardcoded
+        # topology below. Off by default; the foothold for a graph-driven
+        # (drag-and-drop) schematic editor.
+        # Direct injection of RX instance lines (used by the schematic editor's
+        # /api/schematic-sim endpoint, which serialises a user-drawn graph).
+        inject = getattr(self, 'rx_instances_override', None)
+        use_graph = (inject is not None or
+                     (os.environ.get('OPTISIM_GRAPH_NETLIST') == '1'
+                      and topology == 'ina_bpf_comp'))
+        if not use_graph:
+            data_path_lines.append('* --- Solar Cell ---')
+            data_path_lines.append('Xsc sc_anode sc_cathode optical_power SOLAR_CELL')
+            data_path_lines.append('')
+            data_path_lines.append(f'* --- Current Sense Resistor ---')
+            data_path_lines.append(f'Rsense sc_cathode sense_lo {cfg.r_sense_ohm}')
+            data_path_lines.append('')
+            data_path_lines.append('* --- Ground reference ---')
+            data_path_lines.append('Vgnd_ref sense_lo 0 DC 0')
 
-        if topology == 'ina_bpf_comp':
+        if use_graph:
+            data_path_lines.append('* --- RX chain (generated from CircuitGraph) ---')
+            if inject is not None:
+                data_path_lines.append(inject)
+            else:
+                from .graph_netlist import build_rx_graph, graph_to_instances
+                data_path_lines.append(graph_to_instances(build_rx_graph(cfg)))
+            data_path_lines.append(self._noise_section(cfg, noise_pwl_path))
+        elif topology == 'ina_bpf_comp':
             # INA → BPF(×N) → Comparator
             ina_out_node = 'ina_out_clean' if cfg.noise_enable and not noise_pwl_path else 'ina_out'
             data_path_lines.append('')
@@ -932,16 +1017,27 @@ Xdcdc sc_anode dcdc_out 0 phi BOOST_DCDC
 Rout_dcdc dcdc_out 0 1MEG
 """
 
-        # Build measurements
-        meas_lines = [f'.MEAS TRAN v_sc_avg AVG V(sc_anode) FROM={t_stop/2:.2e} TO={t_stop:.2e}']
-        if topology == 'ina_bpf_comp':
-            meas_lines.append(f'.MEAS TRAN v_ina_rms RMS V(ina_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
-            if cfg.bpf_stages > 0:
-                meas_lines.append(f'.MEAS TRAN v_bpf_rms RMS V(bpf_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
-                meas_lines.append(f'.MEAS TRAN v_bpf_pp PP V(bpf_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
-        if cfg.dcdc_enable:
-            meas_lines.append(f'.MEAS TRAN v_dcdc_avg AVG V(dcdc_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
-        measurements = '\n'.join(meas_lines)
+        # For a user-drawn graph, the node set is arbitrary: skip the fixed
+        # .MEAS lines (they reference ina_out/bpf_out which may not exist) and
+        # add convergence aids for the behavioral component subcircuits, which
+        # are stiffer than the pipeline's own and can stall LTspice otherwise.
+        if inject is not None:
+            measurements = ''
+            conv_options = (
+                '.OPTIONS gmin=1e-9 cshunt=1e-15 method=gear itl1=500 itl4=500\n'
+                '.OPTIONS gminsteps=10 srcsteps=10'
+            )
+        else:
+            meas_lines = [f'.MEAS TRAN v_sc_avg AVG V(sc_anode) FROM={t_stop/2:.2e} TO={t_stop:.2e}']
+            if topology == 'ina_bpf_comp':
+                meas_lines.append(f'.MEAS TRAN v_ina_rms RMS V(ina_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
+                if cfg.bpf_stages > 0:
+                    meas_lines.append(f'.MEAS TRAN v_bpf_rms RMS V(bpf_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
+                    meas_lines.append(f'.MEAS TRAN v_bpf_pp PP V(bpf_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
+            if cfg.dcdc_enable:
+                meas_lines.append(f'.MEAS TRAN v_dcdc_avg AVG V(dcdc_out) FROM={t_stop/2:.2e} TO={t_stop:.2e}')
+            measurements = '\n'.join(meas_lines)
+            conv_options = ''
 
         netlist = f"""\
 * =====================================================================
@@ -989,6 +1085,7 @@ Voptical optical_power 0 PWL file="{pwl_str}"
 .save V(sc_anode) V(sc_cathode) V(sense_lo) V(optical_power) V(ina_out) V(bpf1_out) V(bpf_out) V(dout) V(dcdc_out)
 .tran {t_step:.2e} {t_stop:.2e} 0 {t_step:.2e}
 .OPTIONS reltol=0.001 abstol=1e-12 vntol=1e-6
+{conv_options}
 
 * Measurements
 {measurements}

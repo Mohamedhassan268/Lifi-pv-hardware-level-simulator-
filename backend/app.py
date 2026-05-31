@@ -28,6 +28,7 @@ from backend.routers import equations as equations_router
 from backend.routers import kicad as kicad_router
 from backend.routers import link_budget as link_budget_router
 from backend.routers import schematic as schematic_router
+from backend.routers import schematic_sim as schematic_sim_router
 from backend.routers import pipeline_ws as pipeline_ws_router
 from backend.routers import presets as presets_router
 from backend.routers import standards as standards_router
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(standards_router.router, prefix="/api/standards", tags=["standards"])
     app.include_router(kicad_router.router, prefix="/api/kicad", tags=["kicad"])
     app.include_router(schematic_router.router, prefix="/api/schematic", tags=["schematic"])
+    app.include_router(schematic_sim_router.router, prefix="/api/schematic-sim", tags=["schematic-sim"])
     app.include_router(equations_router.router, prefix="/api", tags=["equations"])
     app.include_router(pipeline_ws_router.router, tags=["pipeline"])
     app.include_router(sweep_ws_router.router, tags=["sweep"])
