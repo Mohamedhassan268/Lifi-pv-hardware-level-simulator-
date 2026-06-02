@@ -456,8 +456,9 @@ coupled) is unaffected.
 
 Tests: `tests/test_features.py` (6). Gate held: features+mcu **13/13**,
 `cli.py test` **14/14**, `cli.py compare` **8/8**, frontend `tsc`+`vite build`
-clean. Backend changed (`cosim/`,`backend/`) → sidecar/installers stale until a
-two-stage rebuild.
+clean. Two-stage rebuild run 2026-06-02 (sidecar re-frozen + `tauri:build`, Rust
+~51s, no Avast error); `.exe`/MSI/NSIS now ship Phase 17–19 (frozen
+`/api/features/schema` verified).
 
 ---
 
@@ -762,7 +763,7 @@ to avoid Plotly's internal ResizeObserver firing every animation frame.
 |---|---|---|
 | Python backend module (`python -m backend`) | ✅ Works | `backend/__main__.py` |
 | FastAPI app smoke test | ✅ All 12 routes register, REST + WS verified | — |
-| Frozen sidecar binary | ✅ Rebuilt 2026-06-02 (125.9 MB, incl. Phase 18 MCU backend + bundled libngspice); smoke-tested: boots + `/health` ok | `dist/lifi-backend.exe` |
+| Frozen sidecar binary | ✅ Rebuilt 2026-06-02 (125.9 MB, incl. Phase 19 feature-extraction backend + bundled libngspice); smoke-tested: `/health` ok + `/api/features/schema` returns 33 features | `dist/lifi-backend.exe` |
 | Tauri sidecar binary (with target triple) | ✅ Copied | `frontend/src-tauri/binaries/lifi-backend-x86_64-pc-windows-msvc.exe` |
 | Frontend Vite build (`npm run build`) | ✅ Builds cleanly | `frontend/dist/` |
 | Tauri icons | ✅ Generated from placeholder source.png | `frontend/src-tauri/icons/` |
@@ -773,9 +774,9 @@ to avoid Plotly's internal ResizeObserver firing every animation frame.
 | NSIS `.exe` installer (incl. uninstaller) | ✅ Built 2026-06-02 (128.0 MB) | `D:\cargo-target\lifi-pv\release\bundle\nsis\OptiSim_0.1.0_x64-setup.exe` |
 
 > **Note:** all artifacts above were rebuilt 2026-06-02 with the full two-stage
-> build (sidecar re-frozen for the Phase 18 backend, then `tauri:build`), so they
-> ship the current Phase 17+18 UI. Rust compiled in 53.86s with no Avast `os
-> error 5`.
+> build (sidecar re-frozen for the Phase 19 backend, then `tauri:build`), so they
+> ship the current Phase 17–19 UI + backend (incl. the feature-extraction engine
+> and analytics panel). Rust compiled in ~51s with no Avast `os error 5`.
 
 ### Reproducing the build
 
