@@ -54,7 +54,7 @@ app. Original simulation core remains untouched; only the shell is changing.
 | **16** | **Single-canvas TX→Channel→RX co-simulator**: full two-pass engine (TX SPICE → Python channel → RX SPICE → Python post). All 5 modulations close on the canvas — OOK + Manchester (in-circuit comparator slice + Python decode), BFSK + OFDM (analog front-end + Python DSP demod, pilot-based equalizer). Honest 6-source noise in post (proven to bite with distance). Explicit MCU (ESP32) node. UI: power-rail flags, component-relative node sizing, optical-beam channel, New/Open-project → Schematic/Block/Both onboarding with a workspace form-toggle. `.exe` + installers rebuilt. Tests: `tests/test_schematic_cosim.py` (7) | ✅ Done |
 | **17** | **Multi-window launcher + EDA-grade schematic + two-system block diagram** (frontend-only, no Rust/backend change). Landing = launcher; each task spawns a real **separate OS window** (Tauri JS `WebviewWindow`, hash-routed boot, `backend_port` command for the port). Strict per-task tabs + progressive reveal (Engine/Inspector on run, Sweeps/AC on completion). Schematic editor: per-component anchored pin terminals, symbol-keyed sizing, Proteus boxed grid, card-free glyphs. **Two-system block diagram**: A/B systems with an active-system switcher, coupling modes (none / duplex cross-links / shared channel), shared-config electrical tie, two-pass duplex run, per-system results panel. New "build your own" opens **blank** (no preset numbers). **MCU block (Tier A)**: Controller category + inspector + per-system canvas node. `tsc`/`vite build` clean; verified live in `tauri:dev`. **UNCOMMITTED; installers stale (frontend post-dates the Phase-16 build).** | ✅ Done |
 | **18** | **MCU node made load-bearing**: board profiles auto-fill realistic clock/ADC/Vref/sample-rate; `mcu_sample_rate_hz` band-limits `V_rx` before demod (finite-rate ADC — sub-Nyquist aliases, BER degrades; 0 = ideal = no-op); `_rule_mcu` validator (Nyquist + clock-budget warnings). Tests `tests/test_mcu_adc.py` (7); `compare` 8/8. **Two-stage rebuild run 2026-06-02 → `.exe`/MSI/NSIS ship Phase 17+18.** | ✅ Done |
-| **19** | **Feature extraction (ML/data-engineering) + duplex draft-leak fix**: `cosim/features.py` (~33 documented features — link quality, throughput, 3 latencies, power/energy, signal stats, noise) feeding 3 surfaces — `/api/features` + `/dataset` (CSV/JSONL), `metrics.features` WS payload, and a `LinkAnalyticsPanel` (table + export + sweep). Fixed `setActiveSystem` leaving a stale draft that leaked System A edits into B. Tests `tests/test_features.py` (6); 13/13, `compare` 8/8. | ✅ Done |
+| **19** | **Feature extraction (ML/data-engineering) + duplex independence fixes**: `cosim/features.py` (~33 documented features — link quality, throughput, 3 latencies, power/energy, signal stats, noise) feeding 3 surfaces — `/api/features` + `/dataset` (CSV/JSONL), `metrics.features` WS payload, and a `LinkAnalyticsPanel` (table + export + sweep). Duplex A↔B leak fixed three ways: discard stale draft on system switch; `addSystemB` seeds B blank (not a clone of A); **removed the electrical tie** (`vcc_volts`/`adc_*`) that made A's receiver copy into B (user-confirmed). Tests `tests/test_features.py` (6); 13/13, `compare` 8/8. | ✅ Done |
 
 **Phase 5 final artifacts** (built 2026-05-16, Rust compile 8m 06s — these
 predate the Phase 6/7 work and need to be rebuilt for distribution):
@@ -429,15 +429,23 @@ Tests: `tests/test_mcu_adc.py` (7). Validation gate held: `cli.py test` 14/14,
 the backend (`cosim/`), so a full two-stage rebuild was run 2026-06-02 (sidecar
 re-frozen 125.9 MB + `tauri:build`); `.exe`/MSI/NSIS now ship Phase 17+18.
 
-### Phase 19 — Feature extraction (ML/data-engineering) + duplex draft-leak fix (2026-06-02)
+### Phase 19 — Feature extraction (ML/data-engineering) + duplex independence fixes (2026-06-02)
 
-**Duplex bug fix**: editing System A's receiver/channel leaked into System B.
-Root cause — `setActiveSystem` swapped the `config` mirror but left the
-in-progress Inspector `draft` alive; since the Inspector re-seeds a draft
-whenever one is open, A's draft survived the switch and committed into B.
-`configStore.setActiveSystem`/`removeSystemB` now discard the draft on switch.
-The intentional 3-field electrical tie (`vcc_volts`/`adc_vref`/`adc_bits` when
-coupled) is unaffected.
+**Duplex A↔B leak — three fixes** (System B was inheriting System A's config;
+user-confirmed fixed):
+1. `setActiveSystem`/`removeSystemB` now discard the in-progress Inspector
+   `draft` on switch — a draft seeded against one system could otherwise commit
+   into the other (a real but secondary path).
+2. `addSystemB` seeded B with `{ ...systems.A }` (a full clone), so B opened as
+   a copy of A. B now starts **blank/independent**; the backend normalizes unset
+   fields at run time.
+3. **Root cause of the reported symptom** (only the *receiver* leaked, never TX):
+   the electrical tie `SHARED_TIE_KEYS = [vcc_volts, adc_vref, adc_bits]` held
+   those fields in lockstep when Link was on. `vcc_volts` is the receiver's V_cc
+   field, so the receiver was the only inspector touching a tied field. The
+   electrical tie was **removed entirely** — each system's receiver is fully
+   independent. Duplex still draws the A.TX→B.RX / B.TX→A.RX cross-links; "shared
+   channel" mode still shares channel geometry (`SHARED_CHANNEL_KEYS`) only.
 
 **Feature extraction** — one source of truth, three surfaces:
 - `cosim/features.py` `extract_features(result, cfg)` → a NaN-safe, documented
@@ -776,7 +784,8 @@ to avoid Plotly's internal ResizeObserver firing every animation frame.
 > **Note:** all artifacts above were rebuilt 2026-06-02 with the full two-stage
 > build (sidecar re-frozen for the Phase 19 backend, then `tauri:build`), so they
 > ship the current Phase 17–19 UI + backend (incl. the feature-extraction engine
-> and analytics panel). Rust compiled in ~51s with no Avast `os error 5`.
+> and analytics panel). The duplex receiver-independence fixes were folded in via
+> later frontend-only `tauri:build` runs (latest 23:40, no Avast `os error 5`).
 
 ### Reproducing the build
 
