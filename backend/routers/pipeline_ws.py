@@ -316,6 +316,18 @@ async def pipeline_ws(ws: WebSocket) -> None:
             except Exception as e:  # noqa: BLE001 — non-fatal, keep streaming
                 logger.warning("noise breakdown failed: %s", e)
 
+            # ---- Derived feature record for the analytics panel ----
+            try:
+                from cosim.features import extract_features
+                feats = dict(rx.outputs)
+                feats.setdefault("noise_breakdown", metrics.get("noise_breakdown"))
+                feats.setdefault("channel_gain", metrics.get("G_ch"))
+                feats.setdefault("P_rx_avg_uW", metrics.get("P_rx_avg_uW"))
+                feats.setdefault("I_ph_avg_uA", metrics.get("I_ph_avg_uA"))
+                metrics["features"] = extract_features(feats, cfg)
+            except Exception as e:  # noqa: BLE001 — non-fatal, keep streaming
+                logger.warning("feature extraction failed: %s", e)
+
             await send_json(metrics)
 
             # ---- Compliance ----

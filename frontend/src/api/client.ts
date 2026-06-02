@@ -118,8 +118,46 @@ export interface StandardsProfileSummary {
   overrides: Record<string, unknown>;
 }
 
+export interface FeatureMeta {
+  label: string;
+  unit: string;
+  group: string;
+  desc: string;
+}
+export type FeatureSchema = Record<string, FeatureMeta>;
+export interface FeatureSchemaResponse {
+  features: FeatureSchema;
+  sweepable: string[];
+}
+export type FeatureRow = Record<string, number | string | null>;
+export interface FeatureDatasetRequest {
+  config: ConfigDict;
+  param: string;
+  values: number[];
+  n_bits?: number;
+}
+
 export const api = {
   listPresets: () => request<string[]>("/api/presets"),
+  getFeatureSchema: () => request<FeatureSchemaResponse>("/api/features/schema"),
+  featureDatasetJson: (req: FeatureDatasetRequest) =>
+    request<{ param: string; rows: FeatureRow[]; schema: FeatureSchema }>(
+      "/api/features/dataset",
+      { method: "POST", body: JSON.stringify({ ...req, format: "json" }) },
+    ),
+  // CSV/JSONL come back as a plain-text body for download (not JSON).
+  featureDatasetText: async (
+    req: FeatureDatasetRequest,
+    format: "csv" | "jsonl",
+  ): Promise<string> => {
+    const res = await fetch(`${getBackendBase()}/api/features/dataset`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...req, format }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
+    return res.text();
+  },
   getPreset: (name: string) => request<ConfigDict>(`/api/presets/${name}`),
   listStandards: () => request<StandardsProfileSummary[]>("/api/standards"),
   getStandard: (id: string) =>

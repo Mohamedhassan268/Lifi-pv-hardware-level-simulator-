@@ -8,6 +8,7 @@
 import { BitsComparePanel } from "@/features/results/BitsComparePanel";
 import { ConstellationPanel } from "@/features/results/ConstellationPanel";
 import { EyeDiagramPanel } from "@/features/results/EyeDiagramPanel";
+import { LinkAnalyticsPanel } from "@/features/results/LinkAnalyticsPanel";
 import { NoiseBreakdownPanel } from "@/features/results/NoiseBreakdownPanel";
 import { SpectrumPanel } from "@/features/results/SpectrumPanel";
 import { WaveformsPanel } from "@/features/results/WaveformsPanel";
@@ -21,6 +22,7 @@ export function ResultsPanel() {
         <ConstellationPanel />
       </div>
       <SpectrumPanel />
+      <LinkAnalyticsPanel />
       <NoiseBreakdownPanel />
       <BitsComparePanel />
     </div>

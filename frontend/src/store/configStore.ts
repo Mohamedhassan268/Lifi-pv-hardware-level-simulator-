@@ -186,6 +186,8 @@ export const useConfigStore = create<ConfigState>((set, get) => {
       set((s) => ({
         systems: { ...s.systems, B: null },
         coupling: "none",
+        // Drop any draft seeded against B so it can't commit into A.
+        draft: null,
         ...(s.activeSystem === "B"
           ? { activeSystem: "A" as SystemId, config: s.systems.A }
           : {}),
@@ -196,7 +198,11 @@ export const useConfigStore = create<ConfigState>((set, get) => {
       set((s) => {
         const cfg = s.systems[target];
         if (!cfg) return {};
-        return { activeSystem: target, config: cfg };
+        // Discard any in-progress draft: a draft belongs to the system that was
+        // active when it was seeded. Carrying it across a switch would commit
+        // one system's edits into the other (the A→B leak). The Inspector
+        // re-seeds a fresh draft from the newly active system's config.
+        return { activeSystem: target, config: cfg, draft: null };
       });
     },
 

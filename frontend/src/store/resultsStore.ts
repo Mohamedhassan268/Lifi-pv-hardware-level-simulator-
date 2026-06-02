@@ -27,6 +27,8 @@ export interface Metrics {
   I_ph_avg_uA?: number | null;
   G_ch?: number | null;
   noise_breakdown?: NoiseBreakdown | null;
+  /** Full derived-feature record (cosim/features.py). Keyed by feature id. */
+  features?: Record<string, number | string | null> | null;
 }
 
 export interface Waveforms {

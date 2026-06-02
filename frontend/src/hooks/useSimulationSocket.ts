@@ -121,6 +121,10 @@ export function useSimulationSocket() {
               I_ph_avg_uA: numOrNull(m.I_ph_avg_uA),
               G_ch: numOrNull(m.G_ch),
               noise_breakdown: pickNoiseBreakdown(m.noise_breakdown),
+              features:
+                m.features && typeof m.features === "object"
+                  ? (m.features as Record<string, number | string | null>)
+                  : null,
             });
             break;
           }
