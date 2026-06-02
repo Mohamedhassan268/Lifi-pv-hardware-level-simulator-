@@ -53,7 +53,7 @@ app. Original simulation core remains untouched; only the shell is changing.
 | **15** | Drag-and-drop schematic editor + component-driven sim (React Flow editor, `graph → SPICE netlist`, ERC, in-process libngspice via PySpice) | ✅ Done |
 | **16** | **Single-canvas TX→Channel→RX co-simulator**: full two-pass engine (TX SPICE → Python channel → RX SPICE → Python post). All 5 modulations close on the canvas — OOK + Manchester (in-circuit comparator slice + Python decode), BFSK + OFDM (analog front-end + Python DSP demod, pilot-based equalizer). Honest 6-source noise in post (proven to bite with distance). Explicit MCU (ESP32) node. UI: power-rail flags, component-relative node sizing, optical-beam channel, New/Open-project → Schematic/Block/Both onboarding with a workspace form-toggle. `.exe` + installers rebuilt. Tests: `tests/test_schematic_cosim.py` (7) | ✅ Done |
 | **17** | **Multi-window launcher + EDA-grade schematic + two-system block diagram** (frontend-only, no Rust/backend change). Landing = launcher; each task spawns a real **separate OS window** (Tauri JS `WebviewWindow`, hash-routed boot, `backend_port` command for the port). Strict per-task tabs + progressive reveal (Engine/Inspector on run, Sweeps/AC on completion). Schematic editor: per-component anchored pin terminals, symbol-keyed sizing, Proteus boxed grid, card-free glyphs. **Two-system block diagram**: A/B systems with an active-system switcher, coupling modes (none / duplex cross-links / shared channel), shared-config electrical tie, two-pass duplex run, per-system results panel. New "build your own" opens **blank** (no preset numbers). **MCU block (Tier A)**: Controller category + inspector + per-system canvas node. `tsc`/`vite build` clean; verified live in `tauri:dev`. **UNCOMMITTED; installers stale (frontend post-dates the Phase-16 build).** | ✅ Done |
-| **18** | **MCU node made load-bearing**: board profiles auto-fill realistic clock/ADC/Vref/sample-rate; `mcu_sample_rate_hz` band-limits `V_rx` before demod (finite-rate ADC — sub-Nyquist aliases, BER degrades; 0 = ideal = no-op); `_rule_mcu` validator (Nyquist + clock-budget warnings). Tests `tests/test_mcu_adc.py` (7); `compare` 8/8. **Backend touched → sidecar now stale; full two-stage rebuild needed.** | ✅ Done |
+| **18** | **MCU node made load-bearing**: board profiles auto-fill realistic clock/ADC/Vref/sample-rate; `mcu_sample_rate_hz` band-limits `V_rx` before demod (finite-rate ADC — sub-Nyquist aliases, BER degrades; 0 = ideal = no-op); `_rule_mcu` validator (Nyquist + clock-budget warnings). Tests `tests/test_mcu_adc.py` (7); `compare` 8/8. **Two-stage rebuild run 2026-06-02 → `.exe`/MSI/NSIS ship Phase 17+18.** | ✅ Done |
 
 **Phase 5 final artifacts** (built 2026-05-16, Rust compile 8m 06s — these
 predate the Phase 6/7 work and need to be rebuilt for distribution):
@@ -424,9 +424,9 @@ ESP whose settings drive the simulation. Three threads:
   and when the clock leaves < 20 cycles per ADC sample (`mcu.clock_budget_tight`).
 
 Tests: `tests/test_mcu_adc.py` (7). Validation gate held: `cli.py test` 14/14,
-`cli.py compare` 8/8, frontend `tsc -b` + `vite build` clean. **Phase 18 touched
-the backend (`cosim/`), so unlike Phase 17 the frozen sidecar is now stale too —
-a full two-stage rebuild (sidecar + Tauri) is required for distribution.**
+`cli.py compare` 8/8, frontend `tsc -b` + `vite build` clean. Phase 18 touched
+the backend (`cosim/`), so a full two-stage rebuild was run 2026-06-02 (sidecar
+re-frozen 125.9 MB + `tauri:build`); `.exe`/MSI/NSIS now ship Phase 17+18.
 
 ---
 
@@ -731,20 +731,20 @@ to avoid Plotly's internal ResizeObserver firing every animation frame.
 |---|---|---|
 | Python backend module (`python -m backend`) | ✅ Works | `backend/__main__.py` |
 | FastAPI app smoke test | ✅ All 12 routes register, REST + WS verified | — |
-| Frozen sidecar binary | ✅ Rebuilt 2026-06-01 (133 MB, incl. Phase 16 canvas modules + bundled libngspice); smoke-tested: boots + runs the libngspice canvas sim | `dist/lifi-backend.exe` |
+| Frozen sidecar binary | ✅ Rebuilt 2026-06-02 (125.9 MB, incl. Phase 18 MCU backend + bundled libngspice); smoke-tested: boots + `/health` ok | `dist/lifi-backend.exe` |
 | Tauri sidecar binary (with target triple) | ✅ Copied | `frontend/src-tauri/binaries/lifi-backend-x86_64-pc-windows-msvc.exe` |
 | Frontend Vite build (`npm run build`) | ✅ Builds cleanly | `frontend/dist/` |
 | Tauri icons | ✅ Generated from placeholder source.png | `frontend/src-tauri/icons/` |
 | Rust toolchain | ✅ rustc 1.95.0, cargo 1.95.0 | — |
 | MSVC linker (`link.exe`) | ✅ Available via `vcvars64.bat` (MSVC 14.51.36231 + Windows 11 SDK 10.0.26100.0) | — |
-| Portable app | ✅ Built 2026-06-01 (13.8 MB) | `D:\cargo-target\lifi-pv\release\OptiSim.exe` |
-| Final `.msi` installer | ✅ Built 2026-06-01 (133.3 MB) | `D:\cargo-target\lifi-pv\release\bundle\msi\OptiSim_0.1.0_x64_en-US.msi` |
-| NSIS `.exe` installer (incl. uninstaller) | ✅ Built 2026-06-01 (129.4 MB) | `D:\cargo-target\lifi-pv\release\bundle\nsis\OptiSim_0.1.0_x64-setup.exe` |
+| Portable app | ✅ Built 2026-06-02 (13.8 MB) | `D:\cargo-target\lifi-pv\release\OptiSim.exe` |
+| Final `.msi` installer | ✅ Built 2026-06-02 (131.8 MB) | `D:\cargo-target\lifi-pv\release\bundle\msi\OptiSim_0.1.0_x64_en-US.msi` |
+| NSIS `.exe` installer (incl. uninstaller) | ✅ Built 2026-06-02 (128.0 MB) | `D:\cargo-target\lifi-pv\release\bundle\nsis\OptiSim_0.1.0_x64-setup.exe` |
 
-> **Note:** the above `.exe`/MSI/NSIS artifacts predate the Phase 17 frontend
-> (multi-window launcher, two-system block diagram, MCU block). They need a
-> `tauri:build` rebuild to ship the current UI. The frozen **sidecar** is still
-> current — Phase 17 made no backend change, so only Stage 2 (Tauri) is required.
+> **Note:** all artifacts above were rebuilt 2026-06-02 with the full two-stage
+> build (sidecar re-frozen for the Phase 18 backend, then `tauri:build`), so they
+> ship the current Phase 17+18 UI. Rust compiled in 53.86s with no Avast `os
+> error 5`.
 
 ### Reproducing the build
 
