@@ -12,4 +12,6 @@ export interface BlockData extends Record<string, unknown> {
   chips: string[];
   step?: StepName;
   configured: boolean;
+  /** Channel node only: whether to render the noise overlay (per system). */
+  showNoise?: boolean;
 }

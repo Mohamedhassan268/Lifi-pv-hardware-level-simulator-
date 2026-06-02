@@ -8,16 +8,10 @@ import { type Node, type NodeProps } from "@xyflow/react";
 import { NoiseOverlay } from "@/features/builder/NoiseOverlay";
 import { NodeShell } from "@/features/builder/nodes/NodeShell";
 import type { BlockData } from "@/features/builder/nodes/nodeTypes";
-import { useBuilderUIStore } from "@/store/builderUIStore";
-import { useConfigStore } from "@/store/configStore";
 
 export function ChannelNode({ data }: NodeProps<Node<BlockData>>) {
   const { configured } = data;
-  const noiseConfigured = useBuilderUIStore((s) => s.configured.noise);
-  const noiseEnabled = useConfigStore(
-    (s) => Boolean(s.config.noise_enable),
-  );
-  const showNoise = noiseConfigured && noiseEnabled;
+  const showNoise = Boolean(data.showNoise);
 
   return (
     <NodeShell

@@ -17,6 +17,7 @@ import { NoiseInspector } from "@/features/builder/inspectors/NoiseInspector";
 import { TransmitterInspector } from "@/features/builder/inspectors/TransmitterInspector";
 import { ReceiverInspector } from "@/features/builder/inspectors/ReceiverInspector";
 import { GeometryInspector } from "@/features/builder/inspectors/GeometryInspector";
+import { MCUInspector } from "@/features/builder/inspectors/MCUInspector";
 import { Button } from "@/primitives/Button";
 import { useBuilderUIStore, type BuilderCategory } from "@/store/builderUIStore";
 import { useConfigStore } from "@/store/configStore";
@@ -37,6 +38,10 @@ const TITLES: Record<BuilderCategory, { title: string; subtitle: string }> = {
   noise: {
     title: "Noise",
     subtitle: "6-source physical model",
+  },
+  mcu: {
+    title: "Controller (MCU)",
+    subtitle: "ESP32 · Arduino · clock",
   },
 };
 
@@ -132,6 +137,7 @@ export function Inspector() {
         {selected === "transmitter" && <TransmitterInspector />}
         {selected === "receiver" && <ReceiverInspector />}
         {selected === "geometry" && <GeometryInspector />}
+        {selected === "mcu" && <MCUInspector />}
       </div>
 
       <footer className="flex flex-col gap-1 border-t border-hair px-3 py-2">

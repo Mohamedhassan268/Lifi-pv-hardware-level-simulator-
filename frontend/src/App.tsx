@@ -19,6 +19,7 @@ import { waitForBackend } from "@/api/backend";
 import { FormToggle } from "@/features/topbar/FormToggle";
 import { TopBar } from "@/features/topbar/TopBar";
 import { DUR, EASE } from "@/lib/motion";
+import { applyWorkspaceSpec, parseWorkspaceHash } from "@/lib/workspace";
 import { AcRoute } from "@/routes/AcRoute";
 import { BuilderRoute } from "@/routes/BuilderRoute";
 import { EngineRoute } from "@/routes/EngineRoute";
@@ -37,6 +38,11 @@ export function App() {
     let cancelled = false;
     (async () => {
       await waitForBackend();
+      if (cancelled) return;
+      // A dedicated workspace window is told what to be via the URL hash.
+      // The launcher window has no hash and stays on the landing page.
+      const spec = parseWorkspaceHash(window.location.hash);
+      if (spec) await applyWorkspaceSpec(spec);
       if (cancelled) return;
       setReady(true);
     })();

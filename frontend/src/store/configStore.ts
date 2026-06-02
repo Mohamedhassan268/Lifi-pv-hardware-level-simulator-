@@ -7,11 +7,16 @@
  * backend remain the source of truth. Components reach into specific keys
  * via typed selector helpers (see useLinkBudgetInput below).
  *
+ * Two-system model:
+ *   The builder can host two complete TX→Channel→RX systems (A and B) for
+ *   duplex / multi-node studies. Both live in `systems`; `config` always
+ *   mirrors the *active* system so every existing single-system consumer keeps
+ *   reading `config` unchanged. `systems.B === null` means single-system mode.
+ *
  * Draft slice:
- *   The Builder route (/build) edits a `draft` copy of the config so that
- *   in-progress edits never visually scrub the live system underneath other
- *   routes. `commitDraft` promotes the draft to live; `discardDraft` throws
- *   it away.
+ *   The Builder route edits a `draft` copy of the active config so in-progress
+ *   edits never visually scrub the live system. `commitDraft` promotes the
+ *   draft to live; `discardDraft` throws it away.
  */
 
 import { create } from "zustand";
@@ -21,18 +26,60 @@ import type { ConfigDict } from "@/api/client";
 import { api } from "@/api/client";
 
 export type ConfigSource = "live" | "draft";
+export type SystemId = "A" | "B";
+
+/**
+ * How the two systems are coupled:
+ *   - "none"   : independent links, side by side.
+ *   - "duplex" : linked via cross-links (A.TX→B.RX, B.TX→A.RX) + shared rail.
+ *   - "shared" : linked AND both systems use the same optical channel.
+ */
+export type CouplingMode = "none" | "duplex" | "shared";
+
+// Electrical-tie (option a): the shared supply rail + MCU/ADC fields the two
+// systems hold in common when linked. Editing one of these on either system
+// propagates to the other.
+const SHARED_TIE_KEYS = ["vcc_volts", "adc_vref", "adc_bits"] as const;
+
+// Channel/geometry fields kept identical when the systems share one channel.
+const SHARED_CHANNEL_KEYS = [
+  "distance_m", "tx_angle_deg", "rx_tilt_deg", "fov_half_angle_deg",
+  "led_half_angle_deg", "n_reflections", "ambient_illuminance_lux",
+] as const;
+
+function tieKeysFor(coupling: CouplingMode): readonly string[] {
+  return coupling === "shared" ? [...SHARED_TIE_KEYS, ...SHARED_CHANNEL_KEYS] : SHARED_TIE_KEYS;
+}
+
+function sharedSubset(src: ConfigDict, keys: readonly string[] = SHARED_TIE_KEYS): Partial<ConfigDict> {
+  const out: Partial<ConfigDict> = {};
+  for (const k of keys) if (k in src) out[k] = src[k];
+  return out;
+}
 
 interface ConfigState {
   presetName: string | null;
+  /** Mirror of systems[activeSystem] — what single-system consumers read. */
   config: ConfigDict;
+  systems: { A: ConfigDict; B: ConfigDict | null };
+  activeSystem: SystemId;
+  /** How the two systems are coupled (none / duplex / shared channel). */
+  coupling: CouplingMode;
   draft: ConfigDict | null;
   loading: boolean;
   error: string | null;
 
   loadPreset: (name: string) => Promise<void>;
   loadDefaults: () => Promise<void>;
+  loadBlank: () => void;
   patch: (changes: Partial<ConfigDict>) => void;
   reset: () => void;
+
+  // Two-system actions
+  addSystemB: () => void;
+  removeSystemB: () => void;
+  setActiveSystem: (s: SystemId) => void;
+  setCoupling: (c: CouplingMode) => void;
 
   // Draft (Builder) actions
   startDraft: (seed?: ConfigDict) => void;
@@ -41,65 +88,159 @@ interface ConfigState {
   discardDraft: () => void;
 }
 
-export const useConfigStore = create<ConfigState>((set, get) => ({
-  presetName: null,
-  config: {},
-  draft: null,
-  loading: false,
-  error: null,
+export const useConfigStore = create<ConfigState>((set, get) => {
+  const A0: ConfigDict = {};
+  return {
+    presetName: null,
+    config: A0,
+    systems: { A: A0, B: null },
+    activeSystem: "A",
+    coupling: "none",
+    draft: null,
+    loading: false,
+    error: null,
 
-  async loadPreset(name: string) {
-    set({ loading: true, error: null });
-    try {
-      const cfg = await api.getPreset(name);
-      set({ presetName: name, config: cfg, loading: false });
-    } catch (e) {
-      set({ loading: false, error: e instanceof Error ? e.message : String(e) });
-    }
-  },
+    async loadPreset(name: string) {
+      set({ loading: true, error: null });
+      try {
+        const cfg = await api.getPreset(name);
+        set((s) => ({
+          presetName: name,
+          config: cfg,
+          systems: { ...s.systems, [s.activeSystem]: cfg },
+          loading: false,
+        }));
+      } catch (e) {
+        set({ loading: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    },
 
-  async loadDefaults() {
-    // "Build your own" starts from the backend's default SystemConfig so the
-    // builder opens with sane values to tweak, not blank fields. The validate
-    // endpoint echoes a fully-normalized config in `normalized`.
-    set({ loading: true, error: null });
-    try {
-      const r = await api.validateConfig({});
-      set({ presetName: null, config: r.normalized ?? {}, loading: false });
-    } catch (e) {
-      set({ loading: false, error: e instanceof Error ? e.message : String(e) });
-    }
-  },
+    async loadDefaults() {
+      // "Build your own" starts from the backend's default SystemConfig so the
+      // builder opens with sane values to tweak, not blank fields. The validate
+      // endpoint echoes a fully-normalized config in `normalized`.
+      set({ loading: true, error: null });
+      try {
+        const r = await api.validateConfig({});
+        const cfg = r.normalized ?? {};
+        set((s) => ({
+          presetName: null,
+          config: cfg,
+          systems: { ...s.systems, [s.activeSystem]: cfg },
+          loading: false,
+        }));
+      } catch (e) {
+        set({ loading: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    },
 
-  patch(changes) {
-    set((s) => ({ config: { ...s.config, ...changes } }));
-  },
+    loadBlank() {
+      // New "build your own" systems start empty — no preset numbers in the
+      // fields. The backend normalizes any unset fields at run time.
+      set((s) => ({
+        presetName: null,
+        config: {},
+        systems: { ...s.systems, [s.activeSystem]: {} },
+      }));
+    },
 
-  reset() {
-    set({ presetName: null, config: {}, error: null });
-  },
+    patch(changes) {
+      set((s) => {
+        const active = s.activeSystem;
+        const next = { ...s.config, ...changes };
+        const systems = { ...s.systems, [active]: next };
+        // When linked, keep the shared fields in lockstep across A↔B (rail/MCU
+        // always; channel/geometry too when the systems share one channel).
+        if (s.coupling !== "none" && s.systems.B) {
+          const other: SystemId = active === "A" ? "B" : "A";
+          const shared = sharedSubset(changes as ConfigDict, tieKeysFor(s.coupling));
+          if (Object.keys(shared).length > 0) {
+            systems[other] = { ...(systems[other] as ConfigDict), ...shared };
+          }
+        }
+        return { config: next, systems };
+      });
+    },
 
-  startDraft(seed) {
-    // Default seed: clone the current live config so the Builder opens
-    // showing the existing system rather than blank fields.
-    const base = seed ?? get().config;
-    set({ draft: { ...base } });
-  },
+    reset() {
+      const A: ConfigDict = {};
+      set({
+        presetName: null,
+        config: A,
+        systems: { A, B: null },
+        activeSystem: "A",
+        coupling: "none",
+        error: null,
+      });
+    },
 
-  patchDraft(changes) {
-    set((s) => ({ draft: { ...(s.draft ?? {}), ...changes } }));
-  },
+    addSystemB() {
+      set((s) => {
+        if (s.systems.B) return {};
+        // Seed B by cloning A so it opens with sane values to tweak.
+        return { systems: { ...s.systems, B: { ...s.systems.A } } };
+      });
+    },
 
-  commitDraft() {
-    const { draft } = get();
-    if (!draft) return;
-    set({ config: { ...draft }, draft: null, presetName: null });
-  },
+    removeSystemB() {
+      set((s) => ({
+        systems: { ...s.systems, B: null },
+        coupling: "none",
+        ...(s.activeSystem === "B"
+          ? { activeSystem: "A" as SystemId, config: s.systems.A }
+          : {}),
+      }));
+    },
 
-  discardDraft() {
-    set({ draft: null });
-  },
-}));
+    setActiveSystem(target) {
+      set((s) => {
+        const cfg = s.systems[target];
+        if (!cfg) return {};
+        return { activeSystem: target, config: cfg };
+      });
+    },
+
+    setCoupling(c) {
+      set((s) => {
+        if (c === "none" || !s.systems.B) return { coupling: c };
+        // On linking, push the active system's shared fields to the other so
+        // they start consistent (rail/MCU, plus channel when shared).
+        const active = s.activeSystem;
+        const other: SystemId = active === "A" ? "B" : "A";
+        const shared = sharedSubset(s.systems[active] ?? {}, tieKeysFor(c));
+        return {
+          coupling: c,
+          systems: { ...s.systems, [other]: { ...(s.systems[other] as ConfigDict), ...shared } },
+        };
+      });
+    },
+
+    startDraft(seed) {
+      const base = seed ?? get().config;
+      set({ draft: { ...base } });
+    },
+
+    patchDraft(changes) {
+      set((s) => ({ draft: { ...(s.draft ?? {}), ...changes } }));
+    },
+
+    commitDraft() {
+      const { draft, activeSystem } = get();
+      if (!draft) return;
+      const next = { ...draft };
+      set((s) => ({
+        config: next,
+        systems: { ...s.systems, [activeSystem]: next },
+        draft: null,
+        presetName: null,
+      }));
+    },
+
+    discardDraft() {
+      set({ draft: null });
+    },
+  };
+});
 
 // ---- Selectors ----
 
@@ -138,4 +279,9 @@ export function useConfigField<T>(field: string, source: ConfigSource = "live"):
     const src = source === "draft" ? (s.draft ?? s.config) : s.config;
     return src[field] as T | undefined;
   });
+}
+
+/** True when a second system (B) exists. */
+export function useTwoSystem(): boolean {
+  return useConfigStore((s) => s.systems.B !== null);
 }

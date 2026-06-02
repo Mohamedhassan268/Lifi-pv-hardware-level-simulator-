@@ -372,6 +372,52 @@ def _rule_statistical(cfg) -> List[ValidationIssue]:
 
 
 # -----------------------------------------------------------------------------
+# Rule: MCU / DSP node (ADC sample rate vs signal; clock vs per-sample budget)
+# -----------------------------------------------------------------------------
+
+def _rule_mcu(cfg) -> List[ValidationIssue]:
+    issues: List[ValidationIssue] = []
+    fs = getattr(cfg.sim, 'mcu_sample_rate_hz', 0.0) or 0.0
+    rate = cfg.sim.data_rate_bps
+    if fs <= 0 or rate <= 0:
+        return issues  # ideal-ADC / unset -> nothing to check
+
+    # Nyquist: the ADC must sample at >= 2x the line-code symbol rate. Manchester
+    # runs two half-bit symbols per bit; OFDM's occupied band is ~the data rate.
+    scheme = cfg.sim.modulation.upper()
+    symbol_rate = rate * 2 if 'MANCHESTER' in scheme else rate
+    min_fs = 2.0 * symbol_rate
+    if fs < min_fs:
+        issues.append(ValidationIssue(
+            IssueLevel.WARNING, "sim.mcu_sample_rate_hz",
+            f"MCU ADC rate {fs:.0f} Hz is below Nyquist ({min_fs:.0f} Hz) for "
+            f"{cfg.sim.modulation} at {rate:.0f} bps - the demodulator will "
+            f"alias and BER will degrade.",
+            suggestion=f"Raise mcu_sample_rate_hz to >= {min_fs:.0f} Hz "
+                       f"(or pick a faster board / lower the data rate).",
+            rule_id="mcu.adc_under_nyquist",
+        ))
+
+    # Clock budget: a real-time per-sample DSP (FFT bin, filter tap) needs a
+    # handful of instructions per sample. Warn if the controller clock leaves
+    # fewer than ~20 cycles per ADC sample.
+    clock_hz = (getattr(cfg.sim, 'mcu_clock_MHz', 0.0) or 0.0) * 1e6
+    if clock_hz > 0:
+        cycles_per_sample = clock_hz / fs
+        if cycles_per_sample < 20:
+            issues.append(ValidationIssue(
+                IssueLevel.WARNING, "sim.mcu_clock_MHz",
+                f"only ~{cycles_per_sample:.0f} clock cycles per ADC sample "
+                f"(clock {clock_hz/1e6:.0f} MHz, ADC {fs:.0f} Hz) - real-time "
+                f"per-sample DSP is unlikely on this controller.",
+                suggestion="Lower the sample rate, simplify the DSP, or pick a "
+                           "faster controller.",
+                rule_id="mcu.clock_budget_tight",
+            ))
+    return issues
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 
@@ -381,6 +427,7 @@ _ALL_RULES = (
     _rule_datasheet,
     _rule_link_budget,
     _rule_statistical,
+    _rule_mcu,
 )
 
 _LEVEL_ORDER = {

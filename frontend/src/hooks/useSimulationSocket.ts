@@ -17,6 +17,7 @@ import { wsUrl } from "@/api/ws";
 import { useMessagesStore } from "@/store/messagesStore";
 import { usePipelineStore, type StepName } from "@/store/pipelineStore";
 import { useResultsStore } from "@/store/resultsStore";
+import { useUIStore } from "@/store/uiStore";
 import {
   useStandardsStore,
   type ComplianceResult,
@@ -58,6 +59,11 @@ export function useSimulationSocket() {
       clearResults();
       setComplianceResult(null);
       startRun();
+
+      // Results + live log now have content — reveal their tabs.
+      const reveal = useUIStore.getState().reveal;
+      reveal("engine");
+      reveal("inspector");
 
       const ws = new WebSocket(wsUrl("/ws/pipeline"));
       wsRef.current = ws;
@@ -142,10 +148,15 @@ export function useSimulationSocket() {
             setComplianceResult(rest);
             break;
           }
-          case "done":
+          case "done": {
             finishRun(msg.session_dir);
+            // A completed run unlocks the post-hoc analysis tools.
+            const r = useUIStore.getState().reveal;
+            r("sweeps");
+            r("ac");
             ws.close();
             break;
+          }
           case "error":
             failRun(msg.message);
             ws.close();

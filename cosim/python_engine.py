@@ -125,6 +125,21 @@ class PVReceiver:
 # MAIN SIMULATION RUNNER
 # =============================================================================
 
+def _adc_sample(v, t, fs_adc):
+    """Model the MCU's finite-rate ADC: sample ``v`` at ``fs_adc`` then hold the
+    result back onto the physics grid ``t``. Below ~2x the signal bandwidth this
+    aliases (faithful degradation); when fs_adc is faster than the sim grid it is
+    a no-op. ``fs_adc <= 0`` disables it (ideal ADC)."""
+    span = float(t[-1] - t[0])
+    if fs_adc <= 0 or span <= 0:
+        return v
+    n_adc = int(round(span * fs_adc))
+    if n_adc < 2 or n_adc >= len(t):  # ADC at/above the sim rate -> nothing lost
+        return v
+    t_adc = np.linspace(t[0], t[-1], n_adc)
+    return np.interp(t, t_adc, np.interp(t_adc, t, v))
+
+
 def run_python_simulation(config, bits_override=None,
                           probes: Optional[ProbeCapture] = None,
                           stage_hook=None) -> Dict:
@@ -337,6 +352,13 @@ def run_python_simulation(config, bits_override=None,
             V_tia = V_tia * cfg.amp_gain_linear
 
         V_rx = V_tia
+
+    # ========== ADC sampling (MCU) ==========
+    # If the controller's ADC rate is set, band-limit V_rx to what it can
+    # actually capture before the DSP demodulates. 0 = ideal ADC (no-op).
+    fs_adc = float(getattr(cfg, 'mcu_sample_rate_hz', 0.0) or 0.0)
+    if fs_adc > 0:
+        V_rx = _adc_sample(V_rx, t, fs_adc)
 
     # ========== Demodulation ==========
     if mod_scheme == 'OFDM':

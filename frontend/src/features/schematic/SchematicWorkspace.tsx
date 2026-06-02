@@ -10,7 +10,7 @@
  * round trip proven headless in cosim/graph_netlist.py.
  */
 
-import { Background, ConnectionMode, Controls, ReactFlow } from "@xyflow/react";
+import { Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow } from "@xyflow/react";
 import { useCallback, useState } from "react";
 
 import { api } from "@/api/client";
@@ -121,7 +121,21 @@ export function SchematicWorkspace() {
           proOptions={{ hideAttribution: true }}
           fitView
         >
-          <Background gap={20} size={1} color="rgba(255,255,255,0.06)" />
+          {/* Proteus-style boxed grid: fine minor cells + bolder major lines. */}
+          <Background
+            id="grid-minor"
+            variant={BackgroundVariant.Lines}
+            gap={20}
+            lineWidth={1}
+            color="rgba(148,163,184,0.07)"
+          />
+          <Background
+            id="grid-major"
+            variant={BackgroundVariant.Lines}
+            gap={100}
+            lineWidth={1}
+            color="rgba(148,163,184,0.16)"
+          />
           <Controls showInteractive={false} />
         </ReactFlow>
         <div className="pointer-events-none absolute left-4 top-3 text-[10px] uppercase tracking-[0.2em] text-slate-500">

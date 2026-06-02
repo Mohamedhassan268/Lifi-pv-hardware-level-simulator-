@@ -14,10 +14,16 @@
 import { useState } from "react";
 
 import { StandardsModal } from "@/features/standards/StandardsModal";
+import { useDuplexRun } from "@/hooks/useDuplexRun";
 import { useSimulationSocket } from "@/hooks/useSimulationSocket";
 import { Button } from "@/primitives/Button";
-import { useBuilderUIStore, type BuilderCategory } from "@/store/builderUIStore";
-import { useConfigStore } from "@/store/configStore";
+import { useDuplexStore } from "@/store/duplexStore";
+import {
+  useActiveConfigured,
+  useBuilderUIStore,
+  type BuilderCategory,
+} from "@/store/builderUIStore";
+import { useConfigStore, useTwoSystem } from "@/store/configStore";
 import { usePipelineStore } from "@/store/pipelineStore";
 import { useStandardsStore } from "@/store/standardsStore";
 
@@ -63,27 +69,48 @@ const CATEGORIES: CategoryDef[] = [
     summary: (c, ok) =>
       ok ? (c.noise_enable ? "enabled (6 sources)" : "disabled") : "Not configured",
   },
+  {
+    key: "mcu",
+    label: "Controller",
+    hint: "ESP32 · Arduino · clock",
+    summary: (c, ok) =>
+      ok ? `${c.mcu_board ?? "MCU"} · ${c.mcu_clock_MHz ?? "—"} MHz` : "Not configured",
+  },
 ];
 
 export function CategoryRail() {
   const config = useConfigStore((s) => s.config);
+  const systems = useConfigStore((s) => s.systems);
+  const twoSystem = useTwoSystem();
   const selectEntity = useBuilderUIStore((s) => s.selectEntity);
   const selectedEntity = useBuilderUIStore((s) => s.selectedEntity);
-  const configured = useBuilderUIStore((s) => s.configured);
+  const configured = useActiveConfigured();
   const running = usePipelineStore((s) => s.running);
+  const duplexRunning = useDuplexStore((s) => s.running);
   const { runSimulation, cancel } = useSimulationSocket();
+  const { runDuplex } = useDuplexRun();
+
+  const isRunning = twoSystem ? duplexRunning : running;
 
   const configuredCount = (Object.values(configured) as boolean[]).filter(Boolean).length;
   const activeProfileLabel = useStandardsStore((s) => s.activeProfileLabel);
   const [standardsOpen, setStandardsOpen] = useState(false);
 
   const onSimulate = () => {
-    runSimulation({ ...config, simulation_engine: "python" });
+    if (twoSystem && systems.B) {
+      runDuplex(systems.A, systems.B);
+    } else {
+      runSimulation({ ...config, simulation_engine: "python" });
+    }
   };
 
   const onPrecisionRun = () => {
     // 100k bits = measurable BER floor ~1e-5 with 95% Wilson interval.
-    runSimulation({ ...config, simulation_engine: "python", n_bits: 100000 });
+    if (twoSystem && systems.B) {
+      runDuplex({ ...systems.A, n_bits: 100000 }, { ...systems.B, n_bits: 100000 });
+    } else {
+      runSimulation({ ...config, simulation_engine: "python", n_bits: 100000 });
+    }
   };
 
   return (
@@ -91,9 +118,11 @@ export function CategoryRail() {
       <header className="border-b border-hair px-3 py-2">
         <p className="label-inst">System Builder</p>
         <p className="readout mt-0.5 text-[10px] text-slate-500">
-          {configuredCount}/4 entities configured
+          {configuredCount}/{CATEGORIES.length} entities configured
         </p>
       </header>
+
+      <SystemSwitcher />
 
       <div className="flex flex-col">
         {CATEGORIES.map((cat) => (
@@ -120,14 +149,20 @@ export function CategoryRail() {
           </span>
         </button>
 
-        {running ? (
-          <Button variant="ghost" className="w-full" onClick={cancel}>
-            Cancel
-          </Button>
+        {isRunning ? (
+          twoSystem ? (
+            <Button disabled className="w-full">
+              Running A → B…
+            </Button>
+          ) : (
+            <Button variant="ghost" className="w-full" onClick={cancel}>
+              Cancel
+            </Button>
+          )
         ) : (
           <>
             <Button className="w-full" onClick={onSimulate}>
-              ▶ Simulate · 10k bits
+              ▶ Simulate{twoSystem ? " · A + B" : " · 10k bits"}
             </Button>
             <Button variant="ghost" className="w-full" onClick={onPrecisionRun}>
               ▶ Precision · 100k bits
@@ -196,4 +231,88 @@ function formatA(v: unknown): string {
 function formatM(v: unknown): string {
   if (typeof v !== "number") return "—";
   return v < 1 ? `${(v * 100).toFixed(0)}cm` : `${v.toFixed(2)}m`;
+}
+
+// A/B system switcher. Single-system mode shows just "+ Add system B"; once B
+// exists, shows the A|B tabs, a remove button, and the duplex-tie toggle.
+function SystemSwitcher() {
+  const twoSystem = useTwoSystem();
+  const activeSystem = useConfigStore((s) => s.activeSystem);
+  const setActiveSystem = useConfigStore((s) => s.setActiveSystem);
+  const addSystemB = useConfigStore((s) => s.addSystemB);
+  const removeSystemB = useConfigStore((s) => s.removeSystemB);
+  const coupling = useConfigStore((s) => s.coupling);
+  const setCoupling = useConfigStore((s) => s.setCoupling);
+
+  if (!twoSystem) {
+    return (
+      <div className="border-b border-hair px-2 py-1.5">
+        <button
+          type="button"
+          onClick={addSystemB}
+          className="w-full border border-dashed border-hair px-2 py-1 text-[11px] text-slate-300 hover:bg-white/[0.04]"
+        >
+          + Add system B
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1 border-b border-hair px-2 py-1.5">
+      <div className="flex items-center gap-1">
+        {(["A", "B"] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setActiveSystem(s)}
+            className={
+              "flex-1 border px-2 py-1 text-[11px] uppercase tracking-wider " +
+              (activeSystem === s
+                ? "border-beam-400/60 bg-beam-400/[0.08] text-beam-200"
+                : "border-hair text-slate-400 hover:bg-white/[0.04]")
+            }
+          >
+            System {s}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={removeSystemB}
+          title="Remove system B"
+          className="px-1.5 py-1 text-[11px] text-slate-500 hover:text-rose-300"
+        >
+          ✕
+        </button>
+      </div>
+      <label className="flex items-center justify-between px-1 text-[10px] text-slate-400">
+        <span>Link A↔B</span>
+        <input
+          type="checkbox"
+          checked={coupling !== "none"}
+          onChange={(e) => setCoupling(e.target.checked ? "duplex" : "none")}
+          className="accent-beam-400"
+        />
+      </label>
+      {coupling !== "none" && (
+        <div className="flex gap-1 px-1">
+          {(["duplex", "shared"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setCoupling(m)}
+              className={
+                "flex-1 border px-1.5 py-0.5 text-[10px] " +
+                (coupling === m
+                  ? "border-beam-400/60 bg-beam-400/[0.08] text-beam-200"
+                  : "border-hair text-slate-400 hover:bg-white/[0.04]")
+              }
+            >
+              {m === "duplex" ? "Duplex" : "Shared ch."}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

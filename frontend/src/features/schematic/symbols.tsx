@@ -55,6 +55,9 @@ const SYMBOLS: Record<SymbolKey, ReactNode> = {
       <line x1="6" y1="13" x2="18" y2="13" />
       <line x1="6" y1="27" x2="18" y2="27" />
       <line x1="48" y1="20" x2="58" y2="20" />
+      {/* supply-rail stubs (VCC up, VEE down) */}
+      <line x1="30" y1="11" x2="30" y2="3" />
+      <line x1="30" y1="29" x2="30" y2="37" />
       <text x="21" y="16" fontSize="7" fill={STROKE} stroke="none">+</text>
       <text x="22" y="31" fontSize="8" fill={STROKE} stroke="none">−</text>
     </g>,
@@ -67,6 +70,9 @@ const SYMBOLS: Record<SymbolKey, ReactNode> = {
       <line x1="6" y1="13" x2="18" y2="13" />
       <line x1="6" y1="27" x2="18" y2="27" />
       <line x1="48" y1="20" x2="58" y2="20" />
+      {/* supply-rail stubs (VCC up, VEE down) */}
+      <line x1="30" y1="11" x2="30" y2="3" />
+      <line x1="30" y1="29" x2="30" y2="37" />
       <path d="M26,22 h4 v-4 h4" stroke="#c084fc" strokeWidth={1.2} />
     </g>,
   ),

@@ -34,7 +34,7 @@ export function RxNode({ data }: NodeProps<Node<BlockData>>) {
       configured={configured}
       step={data.step}
       accent="harvest"
-      showHandles={{ left: true, right: false }}
+      showHandles={{ left: true, right: true }}
     >
       <svg width="180" height="64" viewBox="0 0 180 64" aria-hidden>
         <defs>

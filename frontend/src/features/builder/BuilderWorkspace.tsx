@@ -17,6 +17,7 @@
 
 import { CategoryRail } from "@/features/builder/CategoryRail";
 import { DiagnosticsBar } from "@/features/builder/DiagnosticsBar";
+import { DuplexResultsPanel } from "@/features/builder/DuplexResultsPanel";
 import { Inspector } from "@/features/builder/Inspector";
 import { ResultsMiniPanel } from "@/features/builder/ResultsMiniPanel";
 import { SchematicCanvas } from "@/features/builder/SchematicCanvas";
@@ -36,6 +37,7 @@ export function BuilderWorkspace() {
           <div className="relative min-h-0 flex-1">
             <SchematicCanvas />
             <ResultsMiniPanel />
+            <DuplexResultsPanel />
           </div>
           <ProbeDock />
         </section>

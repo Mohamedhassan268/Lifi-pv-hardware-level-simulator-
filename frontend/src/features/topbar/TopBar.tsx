@@ -18,6 +18,7 @@ export function TopBar() {
   const route = useUIStore((s) => s.route);
   const setRoute = useUIStore((s) => s.setRoute);
   const forms = useUIStore((s) => s.forms);
+  const revealed = useUIStore((s) => s.revealed);
   const presetName = useConfigStore((s) => s.presetName);
 
   return (
@@ -47,17 +48,29 @@ export function TopBar() {
       <span className="flex-1" />
 
       <div className="flex items-center gap-1 px-2 py-1.5">
+        {/* Design tabs — scoped to the task this workspace was opened for. */}
         {forms.block && (
           <RouteTab label="Builder" active={route === "builder"} onClick={() => setRoute("builder")} />
         )}
         {forms.schematic && (
           <RouteTab label="Schematic" active={route === "schematic"} onClick={() => setRoute("schematic")} />
         )}
-        <RouteTab label="Setup" active={route === "setup"} onClick={() => setRoute("setup")} />
-        <RouteTab label="Engine" active={route === "engine"} onClick={() => setRoute("engine")} />
-        <RouteTab label="Sweeps" active={route === "sweeps"} onClick={() => setRoute("sweeps")} />
-        <RouteTab label="AC" active={route === "ac"} onClick={() => setRoute("ac")} />
-        <RouteTab label="Inspector" active={route === "inspector"} onClick={() => setRoute("inspector")} />
+        {forms.block && (
+          <RouteTab label="Setup" active={route === "setup"} onClick={() => setRoute("setup")} />
+        )}
+        {/* Analysis tabs — appear progressively as results are produced. */}
+        {revealed.engine && (
+          <RouteTab label="Engine" active={route === "engine"} onClick={() => setRoute("engine")} />
+        )}
+        {revealed.sweeps && (
+          <RouteTab label="Sweeps" active={route === "sweeps"} onClick={() => setRoute("sweeps")} />
+        )}
+        {revealed.ac && (
+          <RouteTab label="AC" active={route === "ac"} onClick={() => setRoute("ac")} />
+        )}
+        {revealed.inspector && (
+          <RouteTab label="Inspector" active={route === "inspector"} onClick={() => setRoute("inspector")} />
+        )}
       </div>
 
       <div className="flex items-center border-l border-hair px-2 py-1.5">

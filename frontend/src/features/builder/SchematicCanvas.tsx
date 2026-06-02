@@ -1,16 +1,18 @@
 /**
  * SchematicCanvas — right-panel live schematic, driven by @xyflow/react.
  *
- * Topology is fixed (TX → Channel → RX). Each node type has its own
- * SVG-rich component:
+ * Renders one TX → Channel → RX row per system (A, and B when present). When
+ * the systems are tied (duplex), cross-links A.TX→B.RX and B.TX→A.RX are drawn
+ * between the rows. Each node type has its own SVG-rich component:
  *   - TxNode      — LED + lens + emanating beam dashes
- *   - ChannelNode — Gaussian envelope between two aperture pegs
- *                   (hosts the NoiseOverlay when noise is applied)
+ *   - ChannelNode — Gaussian envelope (hosts the NoiseOverlay)
  *   - RxNode      — PV cell grid (or photodiode body) with incoming photons
  *
+ * Clicking a block selects that system + entity in the Inspector.
+ *
  * State sources:
- *   - configStore.config           — live config; chip labels read from here
- *   - builderUIStore.configured    — drives the "Not configured" dashed state
+ *   - configStore.systems          — per-system live config; chips read here
+ *   - builderUIStore.configuredBySystem — drives the "Not configured" state
  *   - builderUIStore.schematicRev  — bumped by Apply; forces nodes/edges rebuild
  *   - pipelineStore.steps          — TX/Channel/RX running status during Simulate
  */
@@ -26,32 +28,46 @@ import {
 import { useCallback, useMemo } from "react";
 
 import { ChannelNode } from "@/features/builder/nodes/ChannelNode";
+import { McuNode } from "@/features/builder/nodes/McuNode";
 import { RxNode } from "@/features/builder/nodes/RxNode";
 import { TxNode } from "@/features/builder/nodes/TxNode";
 import type { BlockData } from "@/features/builder/nodes/nodeTypes";
 import { useGlassBoxPipeline } from "@/features/probes/useGlassBoxPipeline";
-import { useBuilderUIStore, type BuilderCategory } from "@/store/builderUIStore";
-import { useConfigStore } from "@/store/configStore";
+import {
+  useBuilderUIStore,
+  type BuilderCategory,
+  type ConfiguredMap,
+} from "@/store/builderUIStore";
+import { useConfigStore, type CouplingMode, type SystemId } from "@/store/configStore";
 import { usePipelineExecutionStore } from "@/store/pipelineExecutionStore";
+import type { ConfigDict } from "@/api/client";
 
-const nodeTypes = { tx: TxNode, channel: ChannelNode, rx: RxNode };
+const nodeTypes = { tx: TxNode, channel: ChannelNode, rx: RxNode, mcu: McuNode };
 
-// Canvas node id → inspector entity. Channel block configures the geometry entity.
-const NODE_TO_ENTITY: Record<string, BuilderCategory> = {
+// Canvas node base id → inspector entity. Channel configures the geometry entity.
+const BASE_TO_ENTITY: Record<string, BuilderCategory> = {
   tx: "transmitter",
   channel: "geometry",
   rx: "receiver",
+  mcu: "mcu",
 };
 
-// Edge → probe ID mapping. Matches cosim.probes registry edge_id fields.
+// Edge → probe ID mapping (system A only — backend probes aren't system-tagged
+// yet). Matches cosim.probes registry edge_id fields.
 const EDGE_PROBE: Record<string, string> = {
-  "tx-channel": "tx.P_tx",
-  "channel-rx": "channel.P_rx",
+  "tx-A-channel-A": "tx.P_tx",
+  "channel-A-rx-A": "channel.P_rx",
 };
+
+const ROW_Y: Record<SystemId, number> = { A: 40, B: 300 };
 
 export function SchematicCanvas() {
-  const config = useConfigStore((s) => s.config);
-  const configured = useBuilderUIStore((s) => s.configured);
+  const systems = useConfigStore((s) => s.systems);
+  const activeSystem = useConfigStore((s) => s.activeSystem);
+  const coupling = useConfigStore((s) => s.coupling);
+  const setActiveSystem = useConfigStore((s) => s.setActiveSystem);
+
+  const configuredBySystem = useBuilderUIStore((s) => s.configuredBySystem);
   const schematicRev = useBuilderUIStore((s) => s.schematicRev);
   const selectedEntity = useBuilderUIStore((s) => s.selectedEntity);
   const selectEntity = useBuilderUIStore((s) => s.selectEntity);
@@ -61,18 +77,30 @@ export function SchematicCanvas() {
   const { fetchProbe } = useGlassBoxPipeline();
 
   const { nodes, edges } = useMemo(
-    () => buildGraph(config, configured, selectedEntity, availableProbes),
+    () =>
+      buildScene({
+        systems,
+        configuredBySystem,
+        activeSystem,
+        coupling,
+        selectedEntity,
+        availableProbes,
+      }),
     // schematicRev forces a rebuild on Apply even if config-object identity tricks memo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config, configured, schematicRev, selectedEntity, availableProbes],
+    [systems, configuredBySystem, activeSystem, coupling, schematicRev, selectedEntity, availableProbes],
   );
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (_, node) => {
-      const entity = NODE_TO_ENTITY[node.id];
-      if (entity) selectEntity(entity);
+      // node.id is `${base}-${system}`, e.g. "tx-A".
+      const [base, sys] = splitNodeId(node.id);
+      const entity = BASE_TO_ENTITY[base];
+      if (!entity) return;
+      if (sys && sys !== activeSystem) setActiveSystem(sys);
+      selectEntity(entity);
     },
-    [selectEntity],
+    [activeSystem, setActiveSystem, selectEntity],
   );
 
   const onEdgeClick: EdgeMouseHandler = useCallback(
@@ -116,138 +144,268 @@ export function SchematicCanvas() {
   );
 }
 
-function buildGraph(
-  c: Record<string, unknown>,
-  cfg: Record<BuilderCategory, boolean>,
-  selectedEntity: BuilderCategory | null,
-  availableProbes: string[],
-): { nodes: Node<BlockData>[]; edges: Edge[] } {
-  const power = num(c.led_radiated_power_mW, 9.3);
-  const bias = num(c.bias_current_A, 0.35);
-  const modulation = (c.modulation as string) ?? "OOK";
-  const rate = num(c.data_rate_bps, 5000);
-  const distance = num(c.distance_m, 0.325);
-  const fov = num(c.fov_half_angle_deg, 90);
-  const ledHalf = num(c.led_half_angle_deg, 9);
-  const reflections = num(c.n_reflections, 0);
-  const pv = (c.pv_part as string) ?? "—";
-  const gain = num(c.ina_gain_dB, 40);
-  const adcBits = num(c.adc_bits, 12);
-  const noiseOn = cfg.noise && Boolean(c.noise_enable);
+function splitNodeId(id: string): [string, SystemId | null] {
+  const m = /^(.*)-([AB])$/.exec(id);
+  return m ? [m[1], m[2] as SystemId] : [id, null];
+}
 
-  const channelChips: string[] = [
-    `${distance.toFixed(2)} m`,
-    `±${ledHalf.toFixed(0)}° beam`,
-    `${fov.toFixed(0)}° FoV`,
-    reflections > 0 ? `${reflections} refl` : "LOS",
-  ];
-  if (cfg.noise) channelChips.push(noiseOn ? "noise ON" : "noise off");
+interface SceneArgs {
+  systems: { A: ConfigDict; B: ConfigDict | null };
+  configuredBySystem: Record<SystemId, ConfiguredMap>;
+  activeSystem: SystemId;
+  coupling: CouplingMode;
+  selectedEntity: BuilderCategory | null;
+  availableProbes: string[];
+}
+
+const tag = (base: string, sys: SystemId) => `${base}-${sys}`;
+
+function entityMatch(sel: BuilderCategory | null, entity: BuilderCategory): boolean {
+  return sel === entity || (entity === "geometry" && sel === "noise");
+}
+
+function buildScene(args: SceneArgs): { nodes: Node<BlockData>[]; edges: Edge[] } {
+  const { systems, configuredBySystem, activeSystem, coupling, selectedEntity, availableProbes } = args;
+
+  // Shared-channel topology: both systems feed one channel block.
+  if (coupling === "shared" && systems.B) {
+    return sharedChannelScene(args);
+  }
+
+  const present: SystemId[] = systems.B ? ["A", "B"] : ["A"];
+  const nodes: Node<BlockData>[] = [];
+  const edges: Edge[] = [];
+
+  for (const sys of present) {
+    const c = systems[sys]!;
+    const conf = configuredBySystem[sys];
+    const active = sys === activeSystem;
+    const y = ROW_Y[sys];
+    const sel = (e: BuilderCategory) => active && entityMatch(selectedEntity, e);
+
+    nodes.push(
+      txNode(sys, c, conf, { x: 30, y }, sel("transmitter")),
+      channelNode(sys, c, conf, { x: 350, y }, sel("geometry")),
+      rxNode(sys, c, conf, { x: 670, y }, sel("receiver")),
+      mcuNode(sys, c, conf, { x: 990, y }, sel("mcu")),
+    );
+    edges.push(
+      linkEdge(tag("tx", sys), tag("channel", sys), conf.transmitter && conf.geometry, "#67e8f9", availableProbes),
+      linkEdge(tag("channel", sys), tag("rx", sys), conf.geometry && conf.receiver, "#fbbf24", availableProbes),
+      linkEdge(tag("rx", sys), tag("mcu", sys), conf.receiver && conf.mcu, "#34d399", []),
+    );
+  }
+
+  // Duplex cross-links between the two systems (A.TX→B.RX, B.TX→A.RX).
+  if (coupling === "duplex" && systems.B) {
+    edges.push(crossLink("tx-A", "rx-B", "A→B"), crossLink("tx-B", "rx-A", "B→A"));
+  }
+
+  return { nodes, edges };
+}
+
+// Both systems' TX feed one channel, which feeds both RX. The shared channel
+// uses system A's config (B's channel/geometry fields are kept in sync).
+function sharedChannelScene(args: SceneArgs): { nodes: Node<BlockData>[]; edges: Edge[] } {
+  const { systems, configuredBySystem, activeSystem, selectedEntity, availableProbes } = args;
+  const A = systems.A;
+  const B = systems.B!;
+  const cA = configuredBySystem.A;
+  const cB = configuredBySystem.B;
+  const selFor = (sys: SystemId, e: BuilderCategory) => activeSystem === sys && entityMatch(selectedEntity, e);
+  const chId = tag("channel", "A"); // shared channel carries A's id
 
   const nodes: Node<BlockData>[] = [
-    {
-      id: "tx",
-      type: "tx",
-      position: { x: 30, y: 100 },
-      selected: selectedEntity === "transmitter",
-      data: {
-        title: "Transmitter",
-        subtitle: cfg.transmitter ? ((c.led_part as string) ?? "LED") : "Not configured",
-        chips: cfg.transmitter
-          ? [
-              `${power.toFixed(1)} mW`,
-              `${(bias * 1000).toFixed(0)} mA`,
-              modulation,
-              `${(rate / 1000).toFixed(1)} kbps`,
-            ]
-          : [],
-        step: "TX",
-        configured: cfg.transmitter,
-      },
-    },
-    {
-      id: "channel",
-      type: "channel",
-      position: { x: 350, y: 100 },
-      selected: selectedEntity === "geometry" || selectedEntity === "noise",
-      data: {
-        title: "Channel",
-        subtitle: cfg.geometry ? "Optical link" : "Not configured",
-        chips: cfg.geometry ? channelChips : [],
-        step: "Channel",
-        configured: cfg.geometry,
-      },
-    },
-    {
-      id: "rx",
-      type: "rx",
-      position: { x: 670, y: 100 },
-      selected: selectedEntity === "receiver",
-      data: {
-        title: "Receiver",
-        subtitle: cfg.receiver ? pv : "Not configured",
-        chips: cfg.receiver
-          ? [`${gain.toFixed(0)} dB`, `${adcBits.toFixed(0)}-bit ADC`, `${modulation} demod`]
-          : [],
-        step: "RX",
-        configured: cfg.receiver,
-      },
-    },
+    txNode("A", A, cA, { x: 30, y: 40 }, selFor("A", "transmitter")),
+    txNode("B", B, cB, { x: 30, y: 300 }, selFor("B", "transmitter")),
+    channelNode("A", A, cA, { x: 360, y: 170 }, entityMatch(selectedEntity, "geometry")),
+    rxNode("A", A, cA, { x: 690, y: 40 }, selFor("A", "receiver")),
+    rxNode("B", B, cB, { x: 690, y: 300 }, selFor("B", "receiver")),
+    mcuNode("A", A, cA, { x: 1010, y: 40 }, selFor("A", "mcu")),
+    mcuNode("B", B, cB, { x: 1010, y: 300 }, selFor("B", "mcu")),
   ];
 
-  const txChEdgeOn = cfg.transmitter && cfg.geometry;
-  const chRxEdgeOn = cfg.geometry && cfg.receiver;
-
-  const txChProbe = "tx.P_tx";
-  const chRxProbe = "channel.P_rx";
-  const txChProbed = availableProbes.includes(txChProbe);
-  const chRxProbed = availableProbes.includes(chRxProbe);
-
   const edges: Edge[] = [
-    {
-      id: "tx-channel",
-      source: "tx",
-      target: "channel",
-      animated: txChEdgeOn,
-      label: txChProbed ? "▣ tx.P_tx" : undefined,
-      labelStyle: { fill: "#67e8f9", fontSize: 9, letterSpacing: "0.1em" },
-      labelBgPadding: [2, 4],
-      labelBgStyle: { fill: "rgba(15,23,42,0.85)" },
-      style: {
-        stroke: txChProbed
-          ? "rgba(103,232,249,0.9)"
-          : txChEdgeOn
-            ? "rgba(103,232,249,0.55)"
-            : "rgba(255,255,255,0.12)",
-        strokeWidth: txChProbed ? 2 : 1.5,
-        strokeDasharray: txChEdgeOn ? undefined : "4 4",
-        cursor: txChProbed ? "pointer" : "default",
-      },
-      data: { probeId: txChProbe, probed: txChProbed },
-    },
-    {
-      id: "channel-rx",
-      source: "channel",
-      target: "rx",
-      animated: chRxEdgeOn,
-      label: chRxProbed ? "▣ channel.P_rx" : undefined,
-      labelStyle: { fill: "#fbbf24", fontSize: 9, letterSpacing: "0.1em" },
-      labelBgPadding: [2, 4],
-      labelBgStyle: { fill: "rgba(15,23,42,0.85)" },
-      style: {
-        stroke: chRxProbed
-          ? "rgba(251,191,36,0.9)"
-          : chRxEdgeOn
-            ? "rgba(251,191,36,0.5)"
-            : "rgba(255,255,255,0.12)",
-        strokeWidth: chRxProbed ? 2 : 1.5,
-        strokeDasharray: chRxEdgeOn ? undefined : "4 4",
-        cursor: chRxProbed ? "pointer" : "default",
-      },
-      data: { probeId: chRxProbe, probed: chRxProbed },
-    },
+    linkEdge(tag("tx", "A"), chId, cA.transmitter && cA.geometry, "#67e8f9", availableProbes),
+    linkEdge(tag("tx", "B"), chId, cB.transmitter && cA.geometry, "#67e8f9", []),
+    linkEdge(chId, tag("rx", "A"), cA.geometry && cA.receiver, "#fbbf24", availableProbes),
+    linkEdge(chId, tag("rx", "B"), cA.geometry && cB.receiver, "#fbbf24", []),
+    linkEdge(tag("rx", "A"), tag("mcu", "A"), cA.receiver && cA.mcu, "#34d399", []),
+    linkEdge(tag("rx", "B"), tag("mcu", "B"), cB.receiver && cB.mcu, "#34d399", []),
   ];
 
   return { nodes, edges };
+}
+
+function txNode(
+  sys: SystemId,
+  c: ConfigDict,
+  conf: ConfiguredMap,
+  position: { x: number; y: number },
+  selected: boolean,
+): Node<BlockData> {
+  const modulation = (c.modulation as string) ?? "OOK";
+  return {
+    id: tag("tx", sys),
+    type: "tx",
+    position,
+    selected,
+    data: {
+      title: "Transmitter",
+      subtitle: conf.transmitter ? ((c.led_part as string) ?? "LED") : "Not configured",
+      chips: conf.transmitter
+        ? [
+            `${num(c.led_radiated_power_mW, 9.3).toFixed(1)} mW`,
+            `${(num(c.bias_current_A, 0.35) * 1000).toFixed(0)} mA`,
+            modulation,
+            `${(num(c.data_rate_bps, 5000) / 1000).toFixed(1)} kbps`,
+          ]
+        : [],
+      step: "TX",
+      configured: conf.transmitter,
+    },
+  };
+}
+
+function channelNode(
+  sys: SystemId,
+  c: ConfigDict,
+  conf: ConfiguredMap,
+  position: { x: number; y: number },
+  selected: boolean,
+): Node<BlockData> {
+  const noiseOn = conf.noise && Boolean(c.noise_enable);
+  const chips: string[] = [
+    `${num(c.distance_m, 0.325).toFixed(2)} m`,
+    `±${num(c.led_half_angle_deg, 9).toFixed(0)}° beam`,
+    `${num(c.fov_half_angle_deg, 90).toFixed(0)}° FoV`,
+    num(c.n_reflections, 0) > 0 ? `${num(c.n_reflections, 0)} refl` : "LOS",
+  ];
+  if (conf.noise) chips.push(noiseOn ? "noise ON" : "noise off");
+  return {
+    id: tag("channel", sys),
+    type: "channel",
+    position,
+    selected,
+    data: {
+      title: "Channel",
+      subtitle: conf.geometry ? "Optical link" : "Not configured",
+      chips: conf.geometry ? chips : [],
+      step: "Channel",
+      configured: conf.geometry,
+      showNoise: noiseOn,
+    },
+  };
+}
+
+function rxNode(
+  sys: SystemId,
+  c: ConfigDict,
+  conf: ConfiguredMap,
+  position: { x: number; y: number },
+  selected: boolean,
+): Node<BlockData> {
+  const modulation = (c.modulation as string) ?? "OOK";
+  return {
+    id: tag("rx", sys),
+    type: "rx",
+    position,
+    selected,
+    data: {
+      title: "Receiver",
+      subtitle: conf.receiver ? ((c.pv_part as string) ?? "—") : "Not configured",
+      chips: conf.receiver
+        ? [
+            `${num(c.ina_gain_dB, 40).toFixed(0)} dB`,
+            `${num(c.adc_bits, 12).toFixed(0)}-bit ADC`,
+            `${modulation} demod`,
+          ]
+        : [],
+      step: "RX",
+      configured: conf.receiver,
+    },
+  };
+}
+
+function mcuNode(
+  sys: SystemId,
+  c: ConfigDict,
+  conf: ConfiguredMap,
+  position: { x: number; y: number },
+  selected: boolean,
+): Node<BlockData> {
+  return {
+    id: tag("mcu", sys),
+    type: "mcu",
+    position,
+    selected,
+    data: {
+      title: "Controller",
+      subtitle: conf.mcu ? ((c.mcu_board as string) ?? "MCU") : "Not configured",
+      chips: conf.mcu
+        ? [
+            `${num(c.mcu_clock_MHz, 240).toFixed(0)} MHz`,
+            `${num(c.adc_bits, 12).toFixed(0)}-bit ADC`,
+          ]
+        : [],
+      configured: conf.mcu,
+    },
+  };
+}
+
+function linkEdge(
+  source: string,
+  target: string,
+  on: boolean,
+  color: string,
+  availableProbes: string[],
+): Edge {
+  const id = `${source}-${target}`;
+  const probeId = EDGE_PROBE[id];
+  const probed = probeId ? availableProbes.includes(probeId) : false;
+  const COLOR_RGB: Record<string, [number, number, number]> = {
+    "#67e8f9": [103, 232, 249],
+    "#fbbf24": [251, 191, 36],
+    "#34d399": [52, 211, 153],
+  };
+  const [r, g, b] = COLOR_RGB[color] ?? [148, 163, 184];
+  return {
+    id,
+    source,
+    target,
+    animated: on,
+    label: probed && probeId ? `▣ ${probeId}` : undefined,
+    labelStyle: { fill: color, fontSize: 9, letterSpacing: "0.1em" },
+    labelBgPadding: [2, 4],
+    labelBgStyle: { fill: "rgba(15,23,42,0.85)" },
+    style: {
+      stroke: probed
+        ? `rgba(${r},${g},${b},0.9)`
+        : on
+          ? `rgba(${r},${g},${b},0.55)`
+          : "rgba(255,255,255,0.12)",
+      strokeWidth: probed ? 2 : 1.5,
+      strokeDasharray: on ? undefined : "4 4",
+      cursor: probed ? "pointer" : "default",
+    },
+    data: probeId ? { probeId, probed } : undefined,
+  };
+}
+
+// Violet, dashed cross-link marking the duplex coupling between the two systems.
+function crossLink(source: string, target: string, label: string): Edge {
+  return {
+    id: `duplex-${source}-${target}`,
+    source,
+    target,
+    animated: true,
+    type: "smoothstep",
+    label: `duplex ${label}`,
+    labelStyle: { fill: "#c084fc", fontSize: 9, letterSpacing: "0.1em" },
+    labelBgPadding: [2, 4],
+    labelBgStyle: { fill: "rgba(15,23,42,0.85)" },
+    style: { stroke: "rgba(192,132,252,0.7)", strokeWidth: 1.5, strokeDasharray: "5 4" },
+  };
 }
 
 function num(v: unknown, fallback: number): number {

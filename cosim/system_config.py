@@ -232,6 +232,17 @@ class SimConfig:
     fec_decode_snr_db: float = 5.0   # LLR-init SNR for the BP decoder
     fec_seed: int = 42
 
+    # MCU / DSP node — the controller (ESP32 / Arduino / …) that reads the
+    # receiver and runs the demodulation DSP. mcu_sample_rate_hz, when > 0,
+    # models the controller's finite-rate ADC: V_rx is band-limited to that
+    # rate before demodulation, so a too-slow ADC aliases the signal and BER
+    # degrades (the faithful constraint). 0 = ideal ADC = today's behaviour,
+    # so every existing preset is unaffected. mcu_board / mcu_clock_MHz are
+    # carried for the validator (Nyquist + clock-budget checks) and UI.
+    mcu_board: str = ''
+    mcu_clock_MHz: float = 0.0
+    mcu_sample_rate_hz: float = 0.0
+
 
 @dataclass
 class ModulationConfig:

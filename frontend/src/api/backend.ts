@@ -43,11 +43,26 @@ export function getWsBase(): string {
  * (Vite dev assumes uvicorn is already up). Inside Tauri we wait for the Rust
  * shell to inject __BACKEND_PORT, then ping /health.
  */
+async function ensurePortFromCommand(): Promise<void> {
+  if (window.__BACKEND_PORT) return;
+  try {
+    const { invoke } = await import("@tauri-apps/api/tauri");
+    const port = await invoke<number>("backend_port");
+    if (typeof port === "number" && port > 0) window.__BACKEND_PORT = port;
+  } catch {
+    // backend_port command unavailable — fall back to injection polling below.
+  }
+}
+
 export async function waitForBackend(timeoutMs = 8000): Promise<void> {
   const t0 = Date.now();
   if (!inTauri()) return;
 
-  // Step 1: wait for window.__BACKEND_PORT
+  // Step 1: resolve the port. The Rust shell injects window.__BACKEND_PORT
+  // into the main window only; spawned workspace windows must ask for it via
+  // the backend_port command. Try the command first (fast, works in every
+  // window), then poll for injection as a fallback.
+  await ensurePortFromCommand();
   while (Date.now() - t0 < timeoutMs && !window.__BACKEND_PORT) {
     await new Promise((r) => setTimeout(r, 75));
   }

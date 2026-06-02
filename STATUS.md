@@ -1,6 +1,6 @@
 # Project Status — Hardware-Faithful LiFi/PV Simulator
 
-**Last updated:** 2026-05-31
+**Last updated:** 2026-06-01
 
 ---
 
@@ -50,6 +50,10 @@ app. Original simulation core remains untouched; only the shell is changing.
 | **12** | Demodulator filter bugfix: `_demodulate_ook` / `_demodulate_manchester` HPF was using scipy `butter(...)` in (b, a) polynomial form at extreme low normalized frequencies (`wn ~ 4e-5` for 2.5 kbps @ 1.25 MHz fs) — filter coefficients silently diverged, output ~7e8, BER pinned to coin-flip. Switched to SOS form (`output='sos'` + `sosfiltfilt`). Kadirvelu 2021 BER **0.50 → 0.0009** (within 9% of paper target 1.008e-3). Pipeline comparator now **8/8 PASS** | ✅ Done |
 | **13** | Soft demap for FEC: per-bit max-log-MAP LLRs in `cosim/modulation.py::_qam_demap_soft` (closed-form QPSK, min-distance loop for 16/64-QAM with cached constellation) + `_demodulate_ofdm(llr_out=...)` plumbing + empirical N₀ from nearest-neighbour distance + new `LDPCCodec.decode_llrs` that passes true LLRs to pyldpc via `snr=0, y=LLRs/2`. python_engine wires the soft path only when `fec_enable && OFDM`; hard-bit fallback retained for non-OFDM FEC. **ieee_802_11bb post-FEC BER 2e-3 → 0/51490 errors** (Wilson UB ≈ 7.5e-5). Comparator stays 8/8 PASS via the existing Wilson-UB gate; no comparator surgery needed | ✅ Done |
 | **14** | OFDM through the analog RX chain: replace the digital-bypass path with `V_rx`-fed demodulation. New `cosim/ofdm_equalizer.py` provides `chain_response_at(cfg, freqs)` and `subcarrier_frequencies(fs, n_fft, n_sc)`. `_modulate_ofdm` gains an `n_subcarriers` param (TX/RX now consistent) and uses FFT-based upsampling (scipy `resample`) instead of `np.interp` to avoid triangular-filter amplitude roll-off on high subcarriers. `python_engine.py` ADC-resamples `V_rx_ac` to the OFDM digital rate before demodulation; equalizer is applied only for non-direct topologies (direct topology is `V_rx = I_ph × R_sense`, a scalar — no RC filter in sim). Validator: `nyquist.ofdm_bpf_incompatible` WARNING when OFDM + bpf_stages > 0. Tests: `tests/test_ofdm_chain.py` (8 tests). Comparator: **8/8 PASS** | ✅ Done |
+| **15** | Drag-and-drop schematic editor + component-driven sim (React Flow editor, `graph → SPICE netlist`, ERC, in-process libngspice via PySpice) | ✅ Done |
+| **16** | **Single-canvas TX→Channel→RX co-simulator**: full two-pass engine (TX SPICE → Python channel → RX SPICE → Python post). All 5 modulations close on the canvas — OOK + Manchester (in-circuit comparator slice + Python decode), BFSK + OFDM (analog front-end + Python DSP demod, pilot-based equalizer). Honest 6-source noise in post (proven to bite with distance). Explicit MCU (ESP32) node. UI: power-rail flags, component-relative node sizing, optical-beam channel, New/Open-project → Schematic/Block/Both onboarding with a workspace form-toggle. `.exe` + installers rebuilt. Tests: `tests/test_schematic_cosim.py` (7) | ✅ Done |
+| **17** | **Multi-window launcher + EDA-grade schematic + two-system block diagram** (frontend-only, no Rust/backend change). Landing = launcher; each task spawns a real **separate OS window** (Tauri JS `WebviewWindow`, hash-routed boot, `backend_port` command for the port). Strict per-task tabs + progressive reveal (Engine/Inspector on run, Sweeps/AC on completion). Schematic editor: per-component anchored pin terminals, symbol-keyed sizing, Proteus boxed grid, card-free glyphs. **Two-system block diagram**: A/B systems with an active-system switcher, coupling modes (none / duplex cross-links / shared channel), shared-config electrical tie, two-pass duplex run, per-system results panel. New "build your own" opens **blank** (no preset numbers). **MCU block (Tier A)**: Controller category + inspector + per-system canvas node. `tsc`/`vite build` clean; verified live in `tauri:dev`. **UNCOMMITTED; installers stale (frontend post-dates the Phase-16 build).** | ✅ Done |
+| **18** | **MCU node made load-bearing**: board profiles auto-fill realistic clock/ADC/Vref/sample-rate; `mcu_sample_rate_hz` band-limits `V_rx` before demod (finite-rate ADC — sub-Nyquist aliases, BER degrades; 0 = ideal = no-op); `_rule_mcu` validator (Nyquist + clock-budget warnings). Tests `tests/test_mcu_adc.py` (7); `compare` 8/8. **Backend touched → sidecar now stale; full two-stage rebuild needed.** | ✅ Done |
 
 **Phase 5 final artifacts** (built 2026-05-16, Rust compile 8m 06s — these
 predate the Phase 6/7 work and need to be rebuilt for distribution):
@@ -260,7 +264,169 @@ vs. invest in one fully-demodulating preset).
 Not yet done from the agreed plan: React Flow `ConnectionMode.Loose` (so
 target↔target pins render — some preset edges currently drop); the dual-engine
 **TX SPICE deck** (LED+MOSFET driver → I(LED) → Python channel → RX) and the
-single-canvas TX→Channel-bridge→RX layout.
+single-canvas TX→Channel-bridge→RX layout. **All three landed in Phase 16.**
+
+### Phase 16 — Single-canvas TX→Channel→RX co-simulator (2026-05-31 → 2026-06-01)
+
+The mission locked here: a user draws TX → optical channel → RX on **one
+canvas** and runs a hardware-faithful link. Because the channel is Python, this
+is a **multi-pass co-simulation**, not one SPICE pass:
+
+```
+[ TX analog: SPICE ] → [ comms: Python ] → [ RX analog: SPICE ] → [ post: Python ]
+  drive→MOSFET→LED      I(LED)→P_tx→        PV/photodiode→amp→      demod→BER/eye
+  probe I(LED)          channel→P_rx        probe V(out)            (the MCU/DSP)
+```
+
+**Engine choice = in-process libngspice (PySpice), not LTspice** — LTspice batch
+mode nondeterministically hangs on the behavioral subcircuits; libngspice is
+in-process, killable, deterministic, and is what the `.exe` bundles. **Noise =
+Python post** (apply the validated 6-source model to the probed signal; same
+simplification the validated pipeline already makes).
+
+New `cosim/` modules: `tx_spice_runner` (TX deck, probes `I(LED)` via an
+inserted 0 V ammeter), `optical_bridge` (`I(LED)→optical→channel→P_rx`),
+`graph_partition` (split a drawn graph into TX/RX islands — rails, `CHANNEL` and
+`MCU` excluded so they can't merge islands), `pyspice_graph_runner` (RX deck;
+returns probe nets; lenient when there's no `dout`), and `schematic_cosim`
+(orchestrator). `graph_netlist` / `erc` from Phase 15 extended (C primitive,
+`DRIVE`/`CHANNEL`/`MCU`/rail markers, optical-pin ERC).
+
+**Modulations — the analog ↔ digital boundary mirrors real hardware** (analog
+front-end in SPICE; (de)modulation DSP in Python = the MCU/DSP):
+
+- **OOK / Manchester** (`run_two_pass`): 2-level line codes — the comparator
+  *demodulates in-circuit*; Python does the decode (Manchester only). Key RX
+  design: an **average-value (DC-restoration) RC slicer** feeds the comparator
+  threshold, NOT `vref` (tying to `vref` lands the threshold on the bit-0 level
+  → coin flip — the root of the old Phase-15 "BER≈0.5 from an arbitrary circuit"
+  gap). Noise bandwidth follows the symbol rate (Manchester pays its honest 2×
+  penalty).
+- **BFSK / OFDM** (`run_analog_link`): continuous-waveform, no in-circuit
+  slicing. Python linear-driver TX + channel → SPICE RX analog front-end →
+  Python DSP demod (Goertzel / FFT). **OFDM needs a fast photodiode (BPW34,
+  72 pF — NOT the 798 nF solar cell) + a passive transimpedance (photodiode +
+  load R)** — an active OPA380 TIA does **not** converge in libngspice feedback
+  (documented limitation). OFDM closes via a **pilot-based per-subcarrier
+  equalizer** measured from the drawn circuit (a 1–2 symbol training preamble;
+  resolves the inverting front-end's 180° phase). BER 0 at 200 kbps.
+
+**Honest noise verified**: swept link distance — BER climbs 0 → 0.33 as `P_rx`
+falls, while the noiseless in-circuit recovery stays clean (errors are noise,
+not a circuit failure). Guarded by `tests/test_schematic_cosim.py`.
+
+**MCU (ESP32) node**: the digital baseband made explicit — a label-only node
+whose `adc` pin marks the DSP sample point (`_find_mcu_adc`).
+
+**Frontend** (`features/schematic/`): React Flow editor — palette, power-rail
+flags (VCC/VEE/VREF/GND), MCU/Channel/DataSource markers, OOK + OFDM/BFSK link
+presets, `ConnectionMode.Loose`, component-relative node sizing, optical-beam
+channel symbol, visible wiring. **Onboarding reworked**: Builder → New/Open
+project → Schematic / Block diagram / Both, with a workspace form-toggle
+(`FormToggle`) and TopBar tabs filtered to the chosen forms; results still pop
+up as before.
+
+**Also**: fixed `BSD235N`/MOSFET `.MODEL` for ngspice (explicit terminal caps —
+`CGS`/`CGD` aren't level-1 MOSFET params); KXOB25 junction-cap/shunt unit fix.
+
+Validation gate held throughout: `cli.py test` **14/14**,
+`tests/test_schematic_cosim.py` **7/7**, frontend `tsc`/`vite build` clean.
+`.exe` + MSI/NSIS installers rebuilt 2026-06-01 (frozen sidecar smoke-tested:
+boots + runs the libngspice canvas sim).
+
+### Phase 17 — Multi-window launcher · EDA schematic · two-system block diagram (2026-06-01)
+
+**All frontend-only — no Rust shell or backend changes.** All work is currently
+**UNCOMMITTED**. `tsc -b` + `vite build` clean throughout; each increment was
+verified live in `tauri:dev`. The Phase-16 `.exe`/installers therefore **predate
+this UI and are stale** for distribution (a `tauri:build` will fold it in).
+
+**Multi-window launcher** — the Landing page is now purely a launcher. Each
+choice opens a **real separate OS window** instead of swapping the route in
+place. Implemented entirely with Tauri v1's JS `WebviewWindow` (allowlist
+`all:true`), so **no `main.rs` change was needed**:
+- `lib/workspace.ts` — `WorkspaceSpec`, hash encode/parse, `applyWorkspaceSpec`
+  (per-window store setup), `openWorkspaceWindow` (spawns the OS window with the
+  task in the URL hash, e.g. `index.html#/schematic`, `#/both`,
+  `#/preset/<name>`). Falls back to same-window route swap outside Tauri.
+- `App.tsx` boots from the hash; a spawned window builds its own stores and
+  lands directly in its task (launcher stays on Landing).
+- `api/backend.ts` resolves the port via `invoke("backend_port")` (injection
+  reaches only the `main` window; spawned windows ask the already-registered
+  Rust command).
+- **Strict per-task tabs + progressive reveal** (`uiStore` gains sticky
+  `revealed` flags): Schematic-only shows just Schematic; Block shows
+  Builder + Setup; Engine/Inspector appear on run start, Sweeps/AC on completion
+  (`useSimulationSocket` reveals them).
+
+**Schematic editor — anchored terminals + Proteus grid + card-free glyphs**
+(`features/schematic/`):
+- `PartNode.tsx` — per-symbol pin **anchor map** (`SYMBOL_PINS`, glyph 64×40
+  coords keyed by role, consumed in pin order): handles now sit on the drawn
+  terminal stubs (op-amp INP/INN left, OUT right, VCC/VEE on added rail stubs;
+  photodiode/solar-cell anode-left/cathode-right/optical-top; MOSFET
+  gate-left/drain-source-right). Symbol-keyed footprint sizing (xs→xl) so parts
+  differ by real-world size (resistor vs ESP32). The per-component **card was
+  removed** — bare glyph on the grid, selection shown by a glyph-tracing glow.
+- `SchematicWorkspace.tsx` — `BackgroundVariant.Lines` two-layer boxed grid
+  (fine 20px + bold 100px).
+- `symbols.tsx` — VCC/VEE rail stubs added to amp/comparator glyphs.
+
+**Two-system block diagram** (`features/builder/`, `store/`):
+- `configStore` holds **two systems** (`systems.{A,B}`) + `activeSystem`;
+  `config` mirrors the active one so every existing single-system consumer is
+  unchanged. `coupling ∈ {none, duplex, shared}`; `loadBlank()` for new systems.
+- `builderUIStore` tracks `configuredBySystem` (per A/B); `useActiveConfigured()`.
+- `SchematicCanvas` renders one TX→Channel→RX→MCU row per system; **duplex**
+  draws violet cross-links (A.TX→B.RX, B.TX→A.RX); **shared** re-lays-out to one
+  channel fed by both TX and feeding both RX.
+- **Electrical tie (option a)**: when linked, shared rail/MCU fields
+  (`vcc_volts`, `adc_vref`, `adc_bits`) stay in lockstep A↔B; shared-channel mode
+  also syncs the geometry/channel fields.
+- **Two-pass duplex run** (`useDuplexRun` + `duplexStore`): runs A then B over
+  `/ws/pipeline`, **per-system results side by side** in `DuplexResultsPanel`.
+  The single-system run path is untouched.
+- `CategoryRail` gains the A/B `SystemSwitcher` (Add/Remove B, Link toggle,
+  Duplex|Shared selector) and routes Simulate to the duplex runner when B exists.
+
+**Blank new system** — "build your own" opens with empty fields (`loadBlank`
+instead of `loadDefaults`); the backend normalizes unset fields at run time.
+
+**MCU block (Tier A)** — a 5th **Controller** category (`builderUIStore`
+`BuilderCategory += "mcu"`): `MCUInspector` (board ESP32/Arduino/…, clock,
+ADC bits, sample rate) writing `mcu_*` config keys, and a per-system `McuNode`
+wired RX→MCU on the canvas. Representational only — `mcu_*` are unknown keys the
+backend **silently ignores** (`system_config.py:346`), so runs are unaffected.
+`.ino` firmware execution explicitly deferred (would need an MCU instruction
+emulator); a future Tier B can parse a sketch for declared parameters.
+
+### Phase 18 — MCU node made load-bearing (2026-06-02)
+
+The Tier-A MCU block (Phase 17, representational only) became a configurable
+ESP whose settings drive the simulation. Three threads:
+
+- **Board parameter profiles** (`MCUInspector.tsx`): selecting
+  ESP32 / ESP32-S3 / Arduino Uno / Nano / Pico auto-fills realistic clock,
+  ADC resolution, Vref, and sample rate, and caps the sample-rate field at the
+  board's real ADC ceiling (ESP32 → 2 MSps, Uno → 9.6 kSps). "Custom" leaves
+  fields free.
+- **Sample rate drives DSP**: three real `SimConfig` fields (`mcu_board`,
+  `mcu_clock_MHz`, `mcu_sample_rate_hz`) replace the silently-ignored `mcu_*`
+  keys. A new `_adc_sample` stage in `python_engine.py` band-limits `V_rx` to
+  `mcu_sample_rate_hz` right before demodulation (sample at the ADC instants,
+  hold back onto the physics grid) — one scheme-agnostic insertion point for
+  OOK / Manchester / BFSK / OFDM. A too-slow ADC aliases and BER degrades
+  faithfully (kadirvelu OOK_Manchester @ 2500 bps: ideal → BER 0; 2 kHz ADC →
+  0.34; 500 Hz → 0.45). `mcu_sample_rate_hz = 0` (the default) is a strict
+  no-op, so every existing preset is unaffected.
+- **Validator MCU checks** (`cosim/validation.py` `_rule_mcu`): WARNING when the
+  ADC rate is sub-Nyquist for the line-code symbol rate (`mcu.adc_under_nyquist`)
+  and when the clock leaves < 20 cycles per ADC sample (`mcu.clock_budget_tight`).
+
+Tests: `tests/test_mcu_adc.py` (7). Validation gate held: `cli.py test` 14/14,
+`cli.py compare` 8/8, frontend `tsc -b` + `vite build` clean. **Phase 18 touched
+the backend (`cosim/`), so unlike Phase 17 the frozen sidecar is now stale too —
+a full two-stage rebuild (sidecar + Tauri) is required for distribution.**
 
 ---
 
@@ -565,28 +731,40 @@ to avoid Plotly's internal ResizeObserver firing every animation frame.
 |---|---|---|
 | Python backend module (`python -m backend`) | ✅ Works | `backend/__main__.py` |
 | FastAPI app smoke test | ✅ All 12 routes register, REST + WS verified | — |
-| Frozen sidecar binary | ✅ Built (71.8 MB) | `dist/lifi-backend.exe` |
+| Frozen sidecar binary | ✅ Rebuilt 2026-06-01 (133 MB, incl. Phase 16 canvas modules + bundled libngspice); smoke-tested: boots + runs the libngspice canvas sim | `dist/lifi-backend.exe` |
 | Tauri sidecar binary (with target triple) | ✅ Copied | `frontend/src-tauri/binaries/lifi-backend-x86_64-pc-windows-msvc.exe` |
-| Frontend Vite build (`npm run build`) | ✅ Builds cleanly (after `@types/node` + `vite-env.d.ts` fixes) | `frontend/dist/` |
+| Frontend Vite build (`npm run build`) | ✅ Builds cleanly | `frontend/dist/` |
 | Tauri icons | ✅ Generated from placeholder source.png | `frontend/src-tauri/icons/` |
 | Rust toolchain | ✅ rustc 1.95.0, cargo 1.95.0 | — |
 | MSVC linker (`link.exe`) | ✅ Available via `vcvars64.bat` (MSVC 14.51.36231 + Windows 11 SDK 10.0.26100.0) | — |
-| Final `.msi` installer | ✅ Built | `dist\installer\LiFi PV Simulator_0.1.0_x64_en-US.msi` |
-| NSIS `.exe` installer | ✅ Built (bonus output from `targets: all`) | `dist\installer\LiFi PV Simulator_0.1.0_x64-setup.exe` |
+| Portable app | ✅ Built 2026-06-01 (13.8 MB) | `D:\cargo-target\lifi-pv\release\OptiSim.exe` |
+| Final `.msi` installer | ✅ Built 2026-06-01 (133.3 MB) | `D:\cargo-target\lifi-pv\release\bundle\msi\OptiSim_0.1.0_x64_en-US.msi` |
+| NSIS `.exe` installer (incl. uninstaller) | ✅ Built 2026-06-01 (129.4 MB) | `D:\cargo-target\lifi-pv\release\bundle\nsis\OptiSim_0.1.0_x64-setup.exe` |
+
+> **Note:** the above `.exe`/MSI/NSIS artifacts predate the Phase 17 frontend
+> (multi-window launcher, two-system block diagram, MCU block). They need a
+> `tauri:build` rebuild to ship the current UI. The frozen **sidecar** is still
+> current — Phase 17 made no backend change, so only Stage 2 (Tauri) is required.
 
 ### Reproducing the build
 
+# Two stages. Stage 1 re-freezes the backend (must run after any cosim/backend
+# change so the .exe ships the current Python); Stage 2 builds the Tauri app.
 ```powershell
-# 1. Disable Avast shields for 10 minutes (tray icon → Avast shields control)
-# 2. From repo root:
-& "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-$env:CARGO_TARGET_DIR = "D:\cargo-target\lifi-pv"
-cd frontend
-npm run tauri:build
-# Output:
-#   D:\cargo-target\lifi-pv\release\bundle\msi\LiFi PV Simulator_0.1.0_x64_en-US.msi
-#   D:\cargo-target\lifi-pv\release\bundle\nsis\LiFi PV Simulator_0.1.0_x64-setup.exe
-#   D:\cargo-target\lifi-pv\release\LiFi PV Simulator.exe (portable)
+# 0. Disable Avast shields for 10 minutes (tray icon → Avast shields control)
+
+# Stage 1 — sidecar (PyInstaller): rebuild + copy under the target triple
+.\scripts\build-sidecar.ps1
+#   → dist\lifi-backend.exe  +  frontend\src-tauri\binaries\lifi-backend-x86_64-pc-windows-msvc.exe
+
+# Stage 2 — Tauri (.exe + installers). Run in ONE cmd shell so vcvars persists.
+#   NOTE: use the QUOTED set form — `set "VAR=value"` — or cmd captures the
+#   space before `&&` into CARGO_TARGET_DIR and cargo fails with os error 3.
+cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && set "CARGO_TARGET_DIR=D:\cargo-target\lifi-pv" && cd /d frontend && npm run tauri:build'
+# Output (2026-06-01, incremental Rust ~41 s):
+#   D:\cargo-target\lifi-pv\release\bundle\msi\OptiSim_0.1.0_x64_en-US.msi
+#   D:\cargo-target\lifi-pv\release\bundle\nsis\OptiSim_0.1.0_x64-setup.exe
+#   D:\cargo-target\lifi-pv\release\OptiSim.exe (portable)
 ```
 
 ---

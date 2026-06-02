@@ -28,11 +28,28 @@ export interface ProjectForms {
   block: boolean;
 }
 
+/**
+ * Analysis/result tabs that appear progressively, as the user produces them.
+ * A workspace starts with only its design form(s) visible; these flip true
+ * once there's something to show (a run started → engine/inspector; a run
+ * completed → sweeps/ac). Once revealed, a tab stays revealed for the session.
+ */
+export interface RevealedTabs {
+  engine: boolean;
+  sweeps: boolean;
+  ac: boolean;
+  inspector: boolean;
+}
+
+export type RevealTab = keyof RevealedTabs;
+
 interface UIState {
   route: Route;
   setRoute: (r: Route) => void;
   forms: ProjectForms;
   setForms: (f: ProjectForms) => void;
+  revealed: RevealedTabs;
+  reveal: (tab: RevealTab) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -41,4 +58,7 @@ export const useUIStore = create<UIState>((set) => ({
   // Default to both enabled so every form is reachable until a project picks.
   forms: { schematic: true, block: true },
   setForms: (f) => set({ forms: f }),
+  revealed: { engine: false, sweeps: false, ac: false, inspector: false },
+  reveal: (tab) =>
+    set((s) => (s.revealed[tab] ? s : { revealed: { ...s.revealed, [tab]: true } })),
 }));

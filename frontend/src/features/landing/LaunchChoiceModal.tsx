@@ -20,11 +20,12 @@ import { useEffect, useState } from "react";
 
 import { api } from "@/api/client";
 import { DUR, EASE } from "@/lib/motion";
+import {
+  applyWorkspaceSpec,
+  openWorkspaceWindow,
+  type WorkspaceSpec,
+} from "@/lib/workspace";
 import { Button } from "@/primitives/Button";
-import { useBuilderUIStore } from "@/store/builderUIStore";
-import { useConfigStore } from "@/store/configStore";
-import { useSchematicStore } from "@/store/schematicStore";
-import { useUIStore } from "@/store/uiStore";
 
 const PRESET_BLURBS: Record<string, string> = {
   kadirvelu2021: "Kadirvelu et al. (2021) — 5 kbps OOK Manchester PV link",
@@ -46,14 +47,6 @@ interface LaunchChoiceModalProps {
 }
 
 export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
-  const loadPreset = useConfigStore((s) => s.loadPreset);
-  const loadDefaults = useConfigStore((s) => s.loadDefaults);
-  const resetWorkspace = useBuilderUIStore((s) => s.resetWorkspace);
-  const markAllConfigured = useBuilderUIStore((s) => s.markAllConfigured);
-  const clearSchematic = useSchematicStore((s) => s.clear);
-  const setRoute = useUIStore((s) => s.setRoute);
-  const setForms = useUIStore((s) => s.setForms);
-
   const [step, setStep] = useState<Step>("start");
   const [presets, setPresets] = useState<string[] | null>(null);
   const [presetsError, setPresetsError] = useState<string | null>(null);
@@ -88,41 +81,21 @@ export function LaunchChoiceModal({ open, onClose }: LaunchChoiceModalProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // New project: start empty in the chosen form(s).
-  const onChooseForm = async (form: Form) => {
+  // Each choice opens a dedicated workspace. In the desktop build that's a
+  // real separate OS window; outside Tauri we fall back to the current window.
+  const launch = async (spec: WorkspaceSpec) => {
     if (loading) return;
     setLoading(true);
     try {
-      const schematic = form === "schematic" || form === "both";
-      const block = form === "block" || form === "both";
-      setForms({ schematic, block });
-      if (block) {
-        resetWorkspace();
-        await loadDefaults();
-      }
-      if (schematic) clearSchematic();
       onClose();
-      setRoute(block ? "builder" : "schematic");
+      if (!(await openWorkspaceWindow(spec))) await applyWorkspaceSpec(spec);
     } finally {
       setLoading(false);
     }
   };
 
-  // Open project: a research preset IS the project. Presets configure the
-  // block diagram; open both forms so the user can toggle.
-  const onPickPreset = async (name: string) => {
-    if (loading) return;
-    setLoading(true);
-    try {
-      await loadPreset(name);
-      markAllConfigured();
-      setForms({ schematic: true, block: true });
-      onClose();
-      setRoute("builder");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const onChooseForm = (form: Form) => launch({ mode: form });
+  const onPickPreset = (name: string) => launch({ mode: "preset", name });
 
   return (
     <AnimatePresence>

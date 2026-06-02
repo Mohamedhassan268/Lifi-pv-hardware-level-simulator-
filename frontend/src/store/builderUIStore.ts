@@ -4,30 +4,33 @@
  * Kept separate from configStore so opening/closing a modal doesn't trigger
  * config selectors and config patches don't re-render modal chrome.
  *
- * The preset-vs-own-design choice happens ONCE at the Landing page (via
- * LaunchChoiceModal). Once inside the workspace, Simulate runs straight
- * through — there is no gate.
+ * Two-system model:
+ *   `configured` is tracked per system (A/B). Single-system consumers read the
+ *   *active* system's map via `useActiveConfigured()`; the active system itself
+ *   lives in configStore (the single source of truth for A/B).
  *
  * State surfaces:
  *   - openCategory          : which category modal is open (one at a time)
  *   - schematicRev          : monotonic counter the canvas watches to re-render
  *                             without diffing 80 config keys itself
- *   - configured[category]  : true once the user has clicked Apply for that
- *                             category, OR the LandingChoice preset path
- *                             marked the four categories as fully defined.
+ *   - configuredBySystem    : per-system map; a category is true once the user
+ *                             clicks Apply, or the preset launch path marked all.
  */
 
 import { create } from "zustand";
 
-export type BuilderCategory = "transmitter" | "receiver" | "geometry" | "noise";
+import { useConfigStore, type SystemId } from "@/store/configStore";
 
-type ConfiguredMap = Record<BuilderCategory, boolean>;
+export type BuilderCategory = "transmitter" | "receiver" | "geometry" | "noise" | "mcu";
+
+export type ConfiguredMap = Record<BuilderCategory, boolean>;
 
 const initialConfigured: ConfiguredMap = {
   transmitter: false,
   receiver: false,
   geometry: false,
   noise: false,
+  mcu: false,
 };
 
 const allConfigured: ConfiguredMap = {
@@ -35,12 +38,13 @@ const allConfigured: ConfiguredMap = {
   receiver: true,
   geometry: true,
   noise: true,
+  mcu: true,
 };
 
 interface BuilderUIState {
   openCategory: BuilderCategory | null;
   schematicRev: number;
-  configured: ConfiguredMap;
+  configuredBySystem: Record<SystemId, ConfiguredMap>;
   selectedEntity: BuilderCategory | null;
 
   openModal: (c: BuilderCategory) => void;
@@ -55,25 +59,46 @@ interface BuilderUIState {
 export const useBuilderUIStore = create<BuilderUIState>((set) => ({
   openCategory: null,
   schematicRev: 0,
-  configured: { ...initialConfigured },
+  configuredBySystem: { A: { ...initialConfigured }, B: { ...initialConfigured } },
   selectedEntity: "transmitter",
 
   openModal: (c) => set({ openCategory: c }),
   closeModal: () => set({ openCategory: null }),
   bumpSchematic: () => set((s) => ({ schematicRev: s.schematicRev + 1 })),
+
   markConfigured: (c) =>
-    set((s) => ({ configured: { ...s.configured, [c]: true } })),
+    set((s) => {
+      const a = useConfigStore.getState().activeSystem;
+      return {
+        configuredBySystem: {
+          ...s.configuredBySystem,
+          [a]: { ...s.configuredBySystem[a], [c]: true },
+        },
+      };
+    }),
+
   markAllConfigured: () =>
-    set((s) => ({
-      configured: { ...allConfigured },
-      schematicRev: s.schematicRev + 1,
-    })),
+    set((s) => {
+      const a = useConfigStore.getState().activeSystem;
+      return {
+        configuredBySystem: { ...s.configuredBySystem, [a]: { ...allConfigured } },
+        schematicRev: s.schematicRev + 1,
+      };
+    }),
+
   selectEntity: (c) => set({ selectedEntity: c }),
 
   resetWorkspace: () =>
-    set({
-      configured: { ...initialConfigured },
+    set((s) => ({
+      configuredBySystem: { A: { ...initialConfigured }, B: { ...initialConfigured } },
       openCategory: null,
       selectedEntity: "transmitter",
-    }),
+      schematicRev: s.schematicRev + 1,
+    })),
 }));
+
+/** The configured-map of the currently active system (A or B). */
+export function useActiveConfigured(): ConfiguredMap {
+  const active = useConfigStore((s) => s.activeSystem);
+  return useBuilderUIStore((s) => s.configuredBySystem[active]);
+}
