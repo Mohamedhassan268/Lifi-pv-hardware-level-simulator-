@@ -36,22 +36,22 @@ export type SystemId = "A" | "B";
  */
 export type CouplingMode = "none" | "duplex" | "shared";
 
-// Electrical-tie (option a): the shared supply rail + MCU/ADC fields the two
-// systems hold in common when linked. Editing one of these on either system
-// propagates to the other.
-const SHARED_TIE_KEYS = ["vcc_volts", "adc_vref", "adc_bits"] as const;
-
-// Channel/geometry fields kept identical when the systems share one channel.
+// Channel/geometry fields kept identical ONLY when the two systems explicitly
+// share one optical channel ("shared" mode). No electrical fields (V_cc / ADC /
+// receiver) are ever tied — each system's receiver is fully independent, so
+// editing System A's receiver never touches System B. Duplex coupling adds the
+// A.TX→B.RX / B.TX→A.RX cross-links (drawn in SchematicCanvas) without sharing
+// any config fields.
 const SHARED_CHANNEL_KEYS = [
   "distance_m", "tx_angle_deg", "rx_tilt_deg", "fov_half_angle_deg",
   "led_half_angle_deg", "n_reflections", "ambient_illuminance_lux",
 ] as const;
 
 function tieKeysFor(coupling: CouplingMode): readonly string[] {
-  return coupling === "shared" ? [...SHARED_TIE_KEYS, ...SHARED_CHANNEL_KEYS] : SHARED_TIE_KEYS;
+  return coupling === "shared" ? SHARED_CHANNEL_KEYS : [];
 }
 
-function sharedSubset(src: ConfigDict, keys: readonly string[] = SHARED_TIE_KEYS): Partial<ConfigDict> {
+function sharedSubset(src: ConfigDict, keys: readonly string[]): Partial<ConfigDict> {
   const out: Partial<ConfigDict> = {};
   for (const k of keys) if (k in src) out[k] = src[k];
   return out;
