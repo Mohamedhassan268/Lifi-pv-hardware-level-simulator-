@@ -177,8 +177,12 @@ export const useConfigStore = create<ConfigState>((set, get) => {
     addSystemB() {
       set((s) => {
         if (s.systems.B) return {};
-        // Seed B by cloning A so it opens with sane values to tweak.
-        return { systems: { ...s.systems, B: { ...s.systems.A } } };
+        // System B starts INDEPENDENT (blank), not a clone of A — cloning made
+        // A's receiver/channel/TX values appear in B the moment B was added.
+        // The backend normalizes unset fields at run time (same as a blank
+        // "build your own"); the user configures B from scratch. The optional
+        // Link A↔B tie still shares only the 3 rail/ADC fields when enabled.
+        return { systems: { ...s.systems, B: {} } };
       });
     },
 
