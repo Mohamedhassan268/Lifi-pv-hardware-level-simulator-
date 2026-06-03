@@ -397,6 +397,56 @@ def cmd_sensitivity(args):
     )
 
 
+def cmd_features(args):
+    """Export an ML-ready PHY-feature dataset for a preset (single point or sweep).
+
+    Wraps cosim.feature_sweep: loads the preset, optionally sweeps one numeric
+    axis (e.g. distance_m) over --values, and writes the extract_features
+    records as CSV (or JSONL). This is the offline / cross-comparison surface
+    for the same feature record used by the Link Analytics panel and the
+    /api/features endpoint.
+    """
+    from cosim.feature_sweep import run_feature_sweep, to_csv, to_jsonl, SWEEPABLE
+    from cosim.system_config import SystemConfig
+
+    cfg = SystemConfig.from_preset(args.preset)
+    param = args.sweep or 'distance_m'
+    if param not in SWEEPABLE:
+        print(f"  Axis '{param}' not sweepable. Choose from:\n    {', '.join(SWEEPABLE)}")
+        return
+
+    if args.values:
+        values = [float(x) for x in args.values.split(',')]
+    else:
+        # No --values: single point at the preset's current value of `param`.
+        values = [float(getattr(cfg, param))]
+
+    _header(f"FEATURE EXPORT: {args.preset}  (sweep {param}, {len(values)} point(s))")
+    rows = run_feature_sweep(cfg, param, values, n_bits=args.n_bits, seed=args.seed)
+
+    # Compact stdout view of the headline link metrics (the fidelity story).
+    print(f"  {param:>14} | {'BER':>10} | {'SNR_dB':>8} | "
+          f"{'goodput_Mbps':>12} | {'path_loss_dB':>12}")
+    print("  " + "-" * 66)
+    for r in rows:
+        gp = r.get('goodput_bps')
+        gp_mbps = (gp / 1e6) if isinstance(gp, float) and gp == gp else float('nan')
+        print(f"  {r['sweep_value']:>14g} | {r.get('ber', float('nan')):>10.3e} | "
+              f"{r.get('snr_link_budget_dB', float('nan')):>8.2f} | "
+              f"{gp_mbps:>12.3f} | {r.get('path_loss_dB', float('nan')):>12.2f}")
+
+    fmt = (args.format or 'csv').lower()
+    out = args.output
+    if not out:
+        out_dir = Path('workspace') / 'features'
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = str(out_dir / f"{args.preset}_{param}.{fmt}")
+    text = to_jsonl(rows) if fmt == 'jsonl' else to_csv(rows)
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(text, encoding='utf-8')
+    print(f"\n  Wrote {len(rows)} row(s) -> {out}")
+
+
 def cmd_thermal(args):
     """Run a thermal sweep of one preset across a list of temperatures."""
     from cosim.thermal_sweep import run_thermal_sweep
@@ -599,6 +649,16 @@ def build_parser():
     cp.add_argument('--cross', action='store_true', help='Cross-validate standalone vs pipeline')
     cp.add_argument('-o', '--output', help='Output directory')
 
+    # features (ML-ready PHY-feature dataset export)
+    fe = sub.add_parser('features', help='Export PHY-feature dataset (single point or sweep) to CSV/JSONL')
+    fe.add_argument('--preset', required=True, help='Preset name')
+    fe.add_argument('--sweep', help='Numeric axis to sweep (default: distance_m)')
+    fe.add_argument('--values', help='Comma-separated sweep values, e.g. 0.5,1,2,3,5 (default: preset value)')
+    fe.add_argument('--n-bits', type=int, dest='n_bits', help='Override n_bits per point')
+    fe.add_argument('--seed', type=int, default=0, help='RNG seed (default: 0)')
+    fe.add_argument('--format', choices=['csv', 'jsonl'], default='csv', help='Output format (default: csv)')
+    fe.add_argument('-o', '--output', help='Output file path (default: workspace/features/<preset>_<axis>.<fmt>)')
+
     # thermal
     th = sub.add_parser('thermal', help='Thermal sweep across temperatures')
     th.add_argument('--preset', required=True, help='Preset name')
@@ -652,6 +712,7 @@ def main():
         'validate':   cmd_validate,
         'compare':    cmd_compare,
         'sensitivity': cmd_sensitivity,
+        'features':   cmd_features,
         'thermal':    cmd_thermal,
         'tolerance':  cmd_tolerance,
     }
