@@ -251,10 +251,23 @@ def run_python_simulation(config, bits_override=None,
 
     # Phase 2: PV cell ODE model or simple I = R * P
     pv_result = None
+    pv_harvest = None
     if cfg.pv_ode_enable:
         pv_model = PVCellModel.from_config(cfg)
         pv_result = pv_model.simulate(t, P_rx, R_load=cfg.r_sense_ohm)
         I_ph = pv_result.I_cell
+        # Ambient light is extra DC optical power on the same cell: it shifts the
+        # operating point and adds harvested power. Model its harvest effect on a
+        # second (cheap) solve over the total incident light, leaving the data +
+        # noise path on the LED-only solve — ambient's *data* impact already enters
+        # as shot noise (NoiseModel source 3), so this avoids double-counting it.
+        # Conversion matches noise.py: 1 lux ≈ 1.46 µW/cm² over the cell area.
+        amb_lux = getattr(cfg, 'ambient_illuminance_lux', 0.0)
+        if amb_lux > 0:
+            P_ambient = amb_lux * 1.46e-6 * cfg.sc_area_cm2  # W (DC)
+            pv_harvest = pv_model.simulate(t, P_rx + P_ambient, R_load=cfg.r_sense_ohm)
+        else:
+            pv_harvest = pv_result
     else:
         I_ph = rx.optical_to_current(P_rx)
 
@@ -435,8 +448,9 @@ def run_python_simulation(config, bits_override=None,
     # ========== DC-DC Converter (Phase 2) ==========
     dcdc_result = None
     if pv_result is not None:
-        # Compute harvested power through DC-DC converter
-        V_cell_avg = np.mean(pv_result.V_cell)
+        # Compute harvested power through DC-DC converter (on the harvest solve,
+        # which includes ambient DC light).
+        V_cell_avg = np.mean(pv_harvest.V_cell)
         if V_cell_avg > 0:
             dcdc = BoostConverter.from_config(cfg)
             dcdc_result = dcdc.compute(V_in=V_cell_avg, V_out_target=cfg.vcc_volts)
@@ -537,11 +551,13 @@ def run_python_simulation(config, bits_override=None,
         'ber_uncoded': ber_uncoded,
     }
 
-    # Phase 2: Add per-node waveforms when enhanced models are active
+    # Phase 2: Add per-node waveforms when enhanced models are active.
+    # Harvest waveforms come from the total-light (LED + ambient) solve; the
+    # LED-only data waveform stays on I_ph above.
     if pv_result is not None:
-        result['V_cell'] = pv_result.V_cell
-        result['I_cell'] = pv_result.I_cell
-        result['I_dark'] = pv_result.I_dark
+        result['V_cell'] = pv_harvest.V_cell
+        result['I_cell'] = pv_harvest.I_cell
+        result['I_dark'] = pv_harvest.I_dark
 
     if chain_waveforms is not None:
         result['V_sense'] = chain_waveforms.V_sense

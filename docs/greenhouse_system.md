@@ -124,18 +124,23 @@ Sweeping the PV load `r_sense_ohm` walks the operating point short-circuit → M
 
 | lux | BER | harvest (µW) |
 |---|---|---|
-| 0 | 0.009 | 106 |
-| 100 | 0.32 | 106 |
-| ≥1000 | ~0.50 | 106 |
+| 0 | 0.007 | 106 |
+| 100 | 0.31 | 339 |
+| 1000 | 0.50 | 478 |
+| 10000 | 0.51 | 612 |
+| 50000 | 0.51 | 714 |
 
 1. **Ambient light destroys the link fast** — by 100 lux (dim indoor) BER is
-   already 0.32; at daylight (≥1000 lux) it is coin-flip. As configured, this
+   already ~0.31; at daylight (≥1000 lux) it is coin-flip. As configured, this
    node only communicates near-dark.
-2. **Harvest is flat vs ambient** — the model harvests only the *modulated LED*,
-   not sunlight, so in-model daylight is pure downside.
-   *Design implications:* a greenhouse node needs optical band-filtering (IR +
-   filter) to survive ambient; and capturing the real sunlight-harvest upside is
-   a model extension (ambient → harvest), a **known gap** today.
+2. **Harvest rises with ambient** — ambient is modeled as DC optical power on the
+   cell (`1 lux ≈ 1.46 µW/cm²`, the same conversion as the shot-noise source),
+   shifting the operating point toward Voc and adding harvest: 106 µW (dark) →
+   339 (100 lux) → 714 µW (50 klux). The data path stays on the LED-only solve,
+   so ambient's *data* impact remains the shot-noise term — no double-count.
+   *Design tension:* **daylight is a harvest boon but a comms liability** — the
+   node wants optical/IR band-filtering on the data detector while the harvester
+   sees full-spectrum light.
 
 **Distance (at night):**
 
@@ -158,7 +163,12 @@ usefully**, even where data still closes.
   linearly-implicit integrator (`cosim/pv_model.py`) — ~870× faster solve, ~24×
   per run end-to-end, matching the Radau reference to <0.01% on V/harvest. A full
   Pareto + greenhouse run is now ~30 s. (Radau still available via `simulate(fast=False)`.)
-- `harvested_power_W` is raw cell power; the DC-DC *output* is lower.
+- `harvested_power_W` is raw cell power; the DC-DC *output* is lower (and is
+  load-regulated, so it can stay flat while raw harvest rises).
+- Ambient shifts the **harvest** operating point, but the **data** demod still
+  runs on the LED-only operating point (ambient's data impact = the shot-noise
+  term); coupling the demod to the ambient-shifted operating point is a future
+  refinement.
 - BER at modest `n_bits` (1.5–2.5k) is noisy below ~1e-3.
 - Figures: `workspace/slipt/slipt_pareto.png`, `workspace/slipt/slipt_greenhouse.png`.
 
