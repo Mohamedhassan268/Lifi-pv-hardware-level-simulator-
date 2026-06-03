@@ -1,0 +1,72 @@
+{
+  "preset_name": "slipt_node",
+  "paper_reference": "SLIPT greenhouse sensor node (Simultaneous Lightwave Information and Power Transfer). One PV cell both decodes data AND harvests power; the data<->energy trade is swept via the PV load (r_sense_ohm) operating point. Harvesting hardware from Kadirvelu 2021 (IXYS KXOB25-04X3F GaAs cell + boost DC-DC); direct RX topology so the operating-point sweep isn't masked by amplifier saturation. pv_ode_enable=true engages the PV IV/operating-point model so harvested_power_W is real, not NaN.",
+
+  "led_part": "LXM5-PD01",
+  "driver_part": "ADA4891",
+  "bias_current_A": 0.010,
+  "modulation_depth": 0.33,
+  "led_radiated_power_mW": 9.3,
+  "led_half_angle_deg": 9.0,
+  "led_driver_re": 12.1,
+  "led_gled": 0.88,
+  "lens_transmittance": 0.85,
+
+  "distance_m": 0.325,
+  "tx_angle_deg": 0.0,
+  "rx_tilt_deg": 0.0,
+
+  "pv_part": "KXOB25-04X3F",
+  "pv_ode_enable": true,
+  "sc_area_cm2": 9.0,
+  "sc_responsivity": 0.457,
+  "sc_cj_nF": 798.0,
+  "sc_rsh_kOhm": 138.8,
+  "sc_iph_uA": 508.0,
+  "sc_vmpp_mV": 740.0,
+  "sc_impp_uA": 470.0,
+  "sc_pmpp_uW": 347.0,
+
+  "r_sense_ohm": 1500.0,
+  "ina_part": "N/A",
+  "ina_gain_dB": 0.0,
+  "ina_gbw_kHz": 0.0,
+  "comparator_part": "N/A",
+
+  "bpf_stages": 0,
+  "bpf_f_low_Hz": 0.0,
+  "bpf_f_high_Hz": 10000.0,
+  "bpf_rhp": 0.0,
+  "bpf_chp_pF": 0.0,
+  "bpf_rlp": 0.0,
+  "bpf_clf_nF": 0.0,
+
+  "dcdc_fsw_kHz": 50.0,
+  "dcdc_l_uH": 22.0,
+  "dcdc_cp_uF": 10.0,
+  "dcdc_cl_uF": 47.0,
+  "r_load_ohm": 180000.0,
+
+  "t_stop_s": 0.001,
+  "data_rate_bps": 2500.0,
+  "modulation": "OOK_Manchester",
+  "prbs_order": 7,
+  "n_bits": 2000,
+  "random_seed": 42,
+
+  "simulation_engine": "python",
+  "rx_topology": "direct",
+  "dcdc_enable": true,
+
+  "noise_enable": true,
+  "ina_noise_nV_rtHz": 45.0,
+  "shot_noise_enable": true,
+  "thermal_noise_enable": true,
+
+  "temperature_K": 300.0,
+  "n_cells_series": 1,
+  "n_cells_parallel": 1,
+
+  "target_harvested_power_uW": 223.0,
+  "target_ber": 0.001
+}

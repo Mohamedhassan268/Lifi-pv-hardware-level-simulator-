@@ -23,6 +23,10 @@ SWEEPABLE = (
     "distance_m", "data_rate_bps", "modulation_depth", "ambient_illuminance_lux",
     "led_radiated_power_mW", "mcu_sample_rate_hz", "adc_bits", "n_reflections",
     "fov_half_angle_deg", "tx_angle_deg", "rx_tilt_deg",
+    # PV operating-point levers — the data<->energy (SLIPT) trade-off axis.
+    # r_sense_ohm sets the cell's load operating point (short-circuit -> MPP ->
+    # open-circuit), trading harvested power against data signal swing.
+    "r_sense_ohm", "r_load_ohm",
 )
 
 # Stable column order for exports: the swept axis, identifier tags, then every

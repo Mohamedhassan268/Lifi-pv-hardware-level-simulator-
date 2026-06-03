@@ -21,10 +21,64 @@ from scipy.integrate import solve_ivp
 from dataclasses import dataclass
 from typing import Optional
 
+try:  # numba JITs the fixed-step integrator ~100x; degrade to pure Python if absent.
+    from numba import njit
+    _HAVE_NUMBA = True
+except Exception:  # noqa: BLE001
+    _HAVE_NUMBA = False
+
+    def njit(*args, **kwargs):  # no-op decorator fallback
+        if args and callable(args[0]):
+            return args[0]
+        return lambda f: f
+
 # Physical constants
 Q_ELECTRON = 1.602176634e-19
 K_BOLTZMANN = 1.380649e-23
 EXP_CLIP = 40.0  # Prevent exp overflow
+
+
+@njit(cache=True)
+def _integrate_li_euler(I_ph, dt, C_j0, V_bi, I_s, nVt, G_sh, G_L, V0, exp_clip):
+    """Fixed-step linearly-implicit (Rosenbrock-Euler) integrator for the
+    single-diode PV ODE on a uniform grid.
+
+    Solves  C_j(V)·dV/dt = I_ph(t) − I_dark(V) − V/R_sh − V/(R_load+R_s)
+    by linearizing the diode each step (conductance g_d = dI_dark/dV) and taking
+    the loss + diode-conductance terms implicitly:
+
+        ΔV = [I_ph − I_dark(Vₙ) − (G_sh+G_L)·Vₙ] / [C_j(Vₙ)/dt + g_d(Vₙ) + G_sh + G_L]
+
+    Unconditionally stable (denominator strictly positive, grows with stiffness),
+    one division per step, no Jacobian/LU — yet keeps the full nonlinear diode and
+    voltage-dependent C_j. Accurate because dt is far below the cell time constant.
+    """
+    n = I_ph.shape[0]
+    V = np.empty(n)
+    V[0] = V0
+    Vn = V0
+    GL = G_sh + G_L
+    for i in range(1, n):
+        e = Vn / nVt
+        if e > exp_clip:
+            e = exp_clip
+        ex = np.exp(e)
+        I_dark = I_s * (ex - 1.0)
+        g_d = (I_s / nVt) * ex
+        ratio = Vn / V_bi
+        if ratio > 0.95:
+            ratio = 0.95
+        denom_c = 1.0 - ratio
+        if denom_c < 0.05:
+            denom_c = 0.05
+        C_n = C_j0 / np.sqrt(denom_c)
+        Vn = Vn + (I_ph[i] - I_dark - GL * Vn) / (C_n / dt + g_d + GL)
+        if Vn > V_bi * 0.95:
+            Vn = V_bi * 0.95
+        elif Vn < -0.5:
+            Vn = -0.5
+        V[i] = Vn
+    return V
 
 
 @dataclass
@@ -107,7 +161,8 @@ class PVCellModel:
 
     def simulate(self, t: np.ndarray, P_rx: np.ndarray,
                  R_load: float = 1.0,
-                 V0: float = 0.0) -> PVCellResult:
+                 V0: float = 0.0,
+                 fast: bool = True) -> PVCellResult:
         """
         Run transient ODE simulation.
 
@@ -116,48 +171,51 @@ class PVCellModel:
             P_rx: Received optical power array (W), same length as t
             R_load: Load resistance (ohm)
             V0: Initial cell voltage (V)
+            fast: Use the fixed-step linearly-implicit integrator (default).
+                Set False to use the adaptive Radau reference solver (slower;
+                kept for validation).
 
         Returns:
             PVCellResult with time-domain waveforms
         """
         dt = t[1] - t[0]
+        P_rx = np.asarray(P_rx, dtype=np.float64)
 
-        # Interpolator for P_rx
-        def P_rx_interp(ti):
-            idx = min(int((ti - t[0]) / dt), len(P_rx) - 1)
-            return P_rx[max(idx, 0)]
-
-        def ode_rhs(ti, state):
-            V = state[0]
-            I_ph = self.R_lambda * P_rx_interp(ti)
-            I_dark = self.dark_current(V)
-            I_shunt = V / self.R_sh
-            I_load = V / (R_load + self.R_s)
-            C_j = self.capacitance(V)
-            dVdt = (I_ph - I_dark - I_shunt - I_load) / C_j
-            return [dVdt]
-
-        # Solve with Radau (implicit, good for stiff systems)
-        sol = solve_ivp(
-            ode_rhs,
-            t_span=(t[0], t[-1]),
-            y0=[V0],
-            method='Radau',
-            t_eval=t,
-            rtol=1e-6,
-            atol=1e-9,
-            max_step=dt * 10,
-        )
-
-        if not sol.success:
-            # Fallback to simple Euler if Radau fails
-            V_cell = self._euler_fallback(t, P_rx, R_load, V0)
+        if fast:
+            I_ph_in = self.R_lambda * P_rx
+            V_cell = _integrate_li_euler(
+                I_ph_in, float(dt), float(self.C_j0), float(self.V_bi),
+                float(self.I_s), float(self.n * self.V_T),
+                1.0 / self.R_sh, 1.0 / (R_load + self.R_s),
+                float(V0), float(EXP_CLIP),
+            )
+            if not np.all(np.isfinite(V_cell)):
+                V_cell = self._euler_fallback(t, P_rx, R_load, V0)
         else:
-            V_cell = sol.y[0]
+            # Interpolator for P_rx
+            def P_rx_interp(ti):
+                idx = min(int((ti - t[0]) / dt), len(P_rx) - 1)
+                return P_rx[max(idx, 0)]
 
-        # Compute derived quantities
+            def ode_rhs(ti, state):
+                V = state[0]
+                I_ph = self.R_lambda * P_rx_interp(ti)
+                I_dark = self.dark_current(V)
+                I_shunt = V / self.R_sh
+                I_load = V / (R_load + self.R_s)
+                C_j = self.capacitance(V)
+                return [(I_ph - I_dark - I_shunt - I_load) / C_j]
+
+            sol = solve_ivp(
+                ode_rhs, t_span=(t[0], t[-1]), y0=[V0], method='Radau',
+                t_eval=t, rtol=1e-6, atol=1e-9, max_step=dt * 10,
+            )
+            V_cell = sol.y[0] if sol.success else self._euler_fallback(t, P_rx, R_load, V0)
+
+        # Derived quantities (vectorized)
         I_ph = self.R_lambda * P_rx
-        I_dark = np.array([self.dark_current(v) for v in V_cell])
+        exponent = np.minimum(V_cell / (self.n * self.V_T), EXP_CLIP)
+        I_dark = self.I_s * (np.exp(exponent) - 1.0)
         I_shunt = V_cell / self.R_sh
         I_cell = V_cell / (R_load + self.R_s)
 
