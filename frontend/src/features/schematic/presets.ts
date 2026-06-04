@@ -327,7 +327,7 @@ const BREADBOARD_POC: CanvasPreset = {
       rail("GndPV", "GND", 442, 470),
       node("C1", "C", "C", "C1 couple", "C", "", P.twoTerm, 560, 280),
       node("R4", "R", "R", "R4 bias", "R", "", P.twoTerm, 560, 185, "1Meg"),
-      rail("VrefR4", "VREF", 622, 110),
+      rail("VrefR4", "VREF", 575, 110),
       // --- TL072 U1a: unity buffer (VCC/VEE rails aligned to the pin x: opX+10) ---
       node("Xu1a", "TL072", "TL072", "TL072 U1a (buffer)", "TL072", "Amplifier", opP, 690, 270),
       rail("VccA", "VCC", 700, 185),
@@ -338,11 +338,11 @@ const BREADBOARD_POC: CanvasPreset = {
       rail("VeeB", "VEE", 900, 370),
       node("R6", "R", "R", "R6 fb", "R", "", P.twoTerm, 880, 175, "22k"),
       node("R5", "R", "R", "R5", "R", "", P.twoTerm, 790, 110, "1k"),
-      rail("VrefR5", "VREF", 852, 40),
+      rail("VrefR5", "VREF", 805, 40),
       // --- output coupling + VMID re-bias + ADC protection ---
       node("C2", "C", "C", "C2 couple", "C", "", P.twoTerm, 1030, 280),
       node("Rbias", "R", "R", "R_VMID", "R", "", P.twoTerm, 1030, 185, "100k"),
-      rail("VrefRb", "VREF", 1092, 110),
+      rail("VrefRb", "VREF", 1045, 110),
       node("R9", "R", "R", "R9", "R", "", P.twoTerm, 1150, 280, "1k"),
       node("Xd2", "BZX84C3V3", "BZX84C3V3", "BZX84C3V3 clamp", "BZX84C3V3", "Zener", znP, 1150, 380),
       rail("GndZ", "GND", 1162, 470),
