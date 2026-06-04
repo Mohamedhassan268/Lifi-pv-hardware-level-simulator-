@@ -2,13 +2,11 @@
  * DiagnosticsBar — bottom instrument strip. Reads from configStore +
  * pipelineStore + resultsStore and renders a hairline-segmented status line
  * with the live numerics an engineer expects to see at a glance: pipeline
- * state, modulation, data rate, distance, P_rx, SNR, BER, clock.
+ * state, modulation, data rate, distance, P_rx, SNR, BER.
  *
  * Format is intentionally compact: label-inst (caps) for the column name and
  * a monospace tabular-nums readout below. No data hidden behind hovers.
  */
-
-import { useEffect, useState } from "react";
 
 import { usePipelineStore } from "@/store/pipelineStore";
 import { useResultsStore } from "@/store/resultsStore";
@@ -34,8 +32,6 @@ export function DiagnosticsBar() {
   const completedSteps = (Object.values(steps) as { status: string }[]).filter(
     (s) => s.status === "ok",
   ).length;
-
-  const now = useNowEverySecond();
 
   return (
     <footer className="flex items-stretch border-t border-hair bg-slate-950/95 readout text-[11px] text-slate-300">
@@ -67,10 +63,6 @@ export function DiagnosticsBar() {
       <Cell label="BER" tone={berTone(ber)}>
         {fmtBer(ber)}
       </Cell>
-      <span className="flex-1" />
-      <Cell label="utc" align="right">
-        {now}
-      </Cell>
     </footer>
   );
 }
@@ -80,13 +72,11 @@ function Cell({
   unit,
   children,
   tone,
-  align,
 }: {
   label: string;
   unit?: string;
   children: React.ReactNode;
   tone?: "ok" | "warn" | "fail" | "run";
-  align?: "left" | "right";
 }) {
   const toneClass =
     tone === "ok"
@@ -100,12 +90,7 @@ function Cell({
             : "text-slate-100";
 
   return (
-    <div
-      className={
-        "flex flex-col justify-center gap-px border-r border-hair px-2.5 py-1 " +
-        (align === "right" ? "items-end text-right" : "items-start text-left")
-      }
-    >
+    <div className="flex flex-col items-start justify-center gap-px border-r border-hair px-2.5 py-1 text-left">
       <span className="label-inst text-[9px]">
         {label}
         {unit ? <span className="ml-1 text-slate-600">{unit}</span> : null}
@@ -151,19 +136,4 @@ function berTone(b: number | undefined | null): "ok" | "warn" | "fail" | undefin
   if (b === 0 || b < 1e-4) return "ok";
   if (b < 1e-2) return "warn";
   return "fail";
-}
-
-function useNowEverySecond(): string {
-  const [s, setS] = useState(() => formatNow());
-  useEffect(() => {
-    const id = window.setInterval(() => setS(formatNow()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-  return s;
-}
-
-function formatNow(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }

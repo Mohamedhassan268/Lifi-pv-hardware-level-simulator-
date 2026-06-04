@@ -2,8 +2,8 @@
  * CategoryRail — left panel of the BuilderWorkspace. Four category buttons
  * (Transmitter / Receiver / Geometry / Noise) and a Simulate button.
  *
- * The preset-vs-own-design choice happens at the Landing page; once here,
- * Simulate runs straight through — no gate, no prompt.
+ * The preset-vs-own-design choice happens at the Landing page. Simulate is
+ * gated on the three pipeline stages (TX / RX / Geometry) being configured.
  *
  * Each category button:
  *   - shows a 1-line summary derived from the live config
@@ -22,6 +22,7 @@ import {
   useActiveConfigured,
   useBuilderUIStore,
   type BuilderCategory,
+  type ConfiguredMap,
 } from "@/store/builderUIStore";
 import { useConfigStore, useTwoSystem } from "@/store/configStore";
 import { usePipelineStore } from "@/store/pipelineStore";
@@ -85,6 +86,7 @@ export function CategoryRail() {
   const selectEntity = useBuilderUIStore((s) => s.selectEntity);
   const selectedEntity = useBuilderUIStore((s) => s.selectedEntity);
   const configured = useActiveConfigured();
+  const configuredBySystem = useBuilderUIStore((s) => s.configuredBySystem);
   const running = usePipelineStore((s) => s.running);
   const duplexRunning = useDuplexStore((s) => s.running);
   const { runSimulation, cancel } = useSimulationSocket();
@@ -95,6 +97,13 @@ export function CategoryRail() {
   const configuredCount = (Object.values(configured) as boolean[]).filter(Boolean).length;
   const activeProfileLabel = useStandardsStore((s) => s.activeProfileLabel);
   const [standardsOpen, setStandardsOpen] = useState(false);
+
+  // Minimum to simulate: the three pipeline stages must be configured. In
+  // two-system mode both A and B must be ready. Noise/Controller stay optional.
+  const ready =
+    twoSystem && systems.B
+      ? coreReady(configuredBySystem.A) && coreReady(configuredBySystem.B)
+      : coreReady(configured);
 
   const onSimulate = () => {
     if (twoSystem && systems.B) {
@@ -161,12 +170,22 @@ export function CategoryRail() {
           )
         ) : (
           <>
-            <Button className="w-full" onClick={onSimulate}>
+            <Button className="w-full" onClick={onSimulate} disabled={!ready}>
               ▶ Simulate{twoSystem ? " · A + B" : " · 10k bits"}
             </Button>
-            <Button variant="ghost" className="w-full" onClick={onPrecisionRun}>
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={onPrecisionRun}
+              disabled={!ready}
+            >
               ▶ Precision · 100k bits
             </Button>
+            {!ready && (
+              <p className="readout text-[10px] text-slate-500">
+                Configure Transmitter, Receiver & Geometry to enable simulation.
+              </p>
+            )}
           </>
         )}
       </div>
@@ -221,6 +240,11 @@ function CategoryButton({
       </span>
     </button>
   );
+}
+
+// The minimum to run: the three pipeline stages are configured.
+function coreReady(m: ConfiguredMap): boolean {
+  return m.transmitter && m.receiver && m.geometry;
 }
 
 function formatA(v: unknown): string {
