@@ -229,12 +229,28 @@ export function SchematicWorkspace() {
                   </li>
                 ))}
               </ul>
+              {/* ESP nodes carry their own firmware: DRIVE = TX ESP, MCU = RX ESP. */}
+              {(selected.data.ctype === "DRIVE" || selected.data.ctype === "MCU") && (
+                <div className="border-t border-white/5 pt-2">
+                  <p className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">
+                    {selected.data.ctype === "DRIVE" ? "Transmitter firmware" : "Receiver firmware"}
+                  </p>
+                  <FirmwareSlot
+                    role={selected.data.ctype === "DRIVE" ? "tx" : "rx"}
+                    info={firmwareInfo[selected.data.ctype === "DRIVE" ? "tx" : "rx"]}
+                    onFile={(f) => onFirmware(selected.data.ctype === "DRIVE" ? "tx" : "rx", f)}
+                  />
+                </div>
+              )}
               <Button variant="ghost" onClick={removeSelected}>
                 Delete part
               </Button>
             </div>
           ) : (
-            <p className="text-xs text-slate-500">Select a part to edit.</p>
+            <p className="text-xs text-slate-500">
+              Select a part to edit. Click an ESP node (the GPIO25 driver or the
+              ADC controller) to upload its .ino firmware.
+            </p>
           )}
         </Card>
 
@@ -298,23 +314,6 @@ export function SchematicWorkspace() {
               </label>
             ))}
           </div>
-        </Card>
-
-        <Card>
-          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wider text-slate-300">
-            ESP firmware
-          </h3>
-          <p className="mb-2 text-[10px] text-slate-500">
-            Upload each ESP&apos;s .ino — the PHY constants are parsed into the run.
-          </p>
-          {(["tx", "rx"] as const).map((role) => (
-            <FirmwareSlot
-              key={role}
-              role={role}
-              info={firmwareInfo[role]}
-              onFile={(f) => onFirmware(role, f)}
-            />
-          ))}
         </Card>
 
         <Card>
