@@ -62,6 +62,10 @@
   "r_load_ohm": 1000000.0,
   "vcc_volts": 3.3,
 
+  "mcu_board": "ESP32 DevKit v1",
+  "mcu_clock_MHz": 240.0,
+  "mcu_sample_rate_hz": 0.0,
+
   "n_cells_series": 1,
   "n_cells_parallel": 1,
   "amp_gain_linear": 1.0,
