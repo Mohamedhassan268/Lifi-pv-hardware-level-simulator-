@@ -13,7 +13,7 @@
 import { Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow } from "@xyflow/react";
 import { useCallback, useEffect, useState } from "react";
 
-import { api, type FirmwareFinding } from "@/api/client";
+import { api, type FirmwareFinding, type FirmwareInfo } from "@/api/client";
 import { Button } from "@/primitives/Button";
 import { Card } from "@/primitives/Card";
 import { Palette } from "@/features/schematic/Palette";
@@ -61,7 +61,12 @@ export function SchematicWorkspace() {
 
   // Per-ESP firmware: merged PHY overrides + per-role parse info for display.
   const [firmwareParams, setFirmwareParams] = useState<Record<string, number>>({});
-  type FwInfo = { name: string; findings: FirmwareFinding[]; warnings: string[] };
+  type FwInfo = {
+    name: string;
+    findings: FirmwareFinding[];
+    info: FirmwareInfo[];
+    warnings: string[];
+  };
   const [firmwareInfo, setFirmwareInfo] = useState<{ tx: FwInfo | null; rx: FwInfo | null }>(
     { tx: null, rx: null },
   );
@@ -73,7 +78,7 @@ export function SchematicWorkspace() {
       const res = await api.parseFirmware(role, source, file.name);
       setFirmwareInfo((p) => ({
         ...p,
-        [role]: { name: file.name, findings: res.findings, warnings: res.warnings },
+        [role]: { name: file.name, findings: res.findings, info: res.info, warnings: res.warnings },
       }));
       setFirmwareParams((p) => ({ ...p, ...res.params }));
       if (res.params.data_rate_bps) setDataRateKbps(String(res.params.data_rate_bps / 1000));
@@ -373,7 +378,7 @@ function FirmwareSlot({
   onFile,
 }: {
   role: "tx" | "rx";
-  info: { name: string; findings: FirmwareFinding[]; warnings: string[] } | null;
+  info: { name: string; findings: FirmwareFinding[]; info: FirmwareInfo[]; warnings: string[] } | null;
   onFile: (f: File) => void;
 }) {
   const label = role === "tx" ? "TX ESP" : "RX ESP";
@@ -417,6 +422,16 @@ function FirmwareSlot({
               </div>
             ))}
           </dl>
+          {info.info.length > 0 && (
+            <dl className="mt-1 space-y-0.5 border-t border-white/5 pt-1">
+              {info.info.map((it) => (
+                <div key={it.label} className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="text-slate-500">{it.label}</span>
+                  <span className="font-mono text-slate-300">{it.value}</span>
+                </div>
+              ))}
+            </dl>
+          )}
           {info.warnings.map((w, i) => (
             <p key={i} className="mt-1 text-[9px] text-harvest-300">
               {w}
@@ -434,6 +449,11 @@ function fmtFw(field: string, v: number): string {
   if (field === "data_rate_bps") return v >= 1000 ? `${(v / 1000).toFixed(2)} kbps` : `${v} bps`;
   if (field === "modulation_depth") return `${(v * 100).toFixed(0)}%`;
   if (field === "adc_bits") return `${v}-bit`;
+  if (field === "bias_current_A") return `${(v * 1000).toFixed(1)} mA`;
+  if (field === "led_radiated_power_mW") return `${v} mW`;
+  if (field === "mcu_clock_MHz") return `${v} MHz`;
+  if (field === "adc_vref") return `${v} V`;
+  if (field === "prbs_order") return `PRBS-${v}`;
   return String(v);
 }
 

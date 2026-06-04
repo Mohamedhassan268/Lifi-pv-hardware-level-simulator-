@@ -241,10 +241,16 @@ export interface FirmwareFinding {
   label: string;
   confidence: string;
 }
+export interface FirmwareInfo {
+  label: string;
+  value: string;
+  source: string;
+}
 export interface FirmwareParseResponse {
   role: string;
   params: Record<string, number>;
   findings: FirmwareFinding[];
+  info: FirmwareInfo[];
   warnings: string[];
 }
 

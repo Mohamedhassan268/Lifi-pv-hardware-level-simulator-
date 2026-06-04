@@ -72,6 +72,11 @@ class CircuitGraphIn(BaseModel):
     modulation_depth: float | None = None
     adc_bits: float | None = None
     mcu_sample_rate_hz: float | None = None
+    bias_current_A: float | None = None
+    led_radiated_power_mW: float | None = None
+    prbs_order: float | None = None
+    mcu_clock_MHz: float | None = None
+    adc_vref: float | None = None
 
 
 class SchematicSimResponse(BaseModel):
@@ -146,6 +151,16 @@ def simulate(graph: CircuitGraphIn) -> SchematicSimResponse:
             _d["adc_bits"] = int(min(max(graph.adc_bits, 1), 24))
         if graph.mcu_sample_rate_hz is not None:
             _d["mcu_sample_rate_hz"] = float(max(graph.mcu_sample_rate_hz, 0.0))
+        if graph.bias_current_A is not None:
+            _d["bias_current_A"] = float(min(max(graph.bias_current_A, 0.0), 1.0))
+        if graph.led_radiated_power_mW is not None:
+            _d["led_radiated_power_mW"] = float(max(graph.led_radiated_power_mW, 0.0))
+        if graph.prbs_order is not None:
+            _d["prbs_order"] = int(min(max(graph.prbs_order, 3), 31))
+        if graph.mcu_clock_MHz is not None:
+            _d["mcu_clock_MHz"] = float(max(graph.mcu_clock_MHz, 0.0))
+        if graph.adc_vref is not None:
+            _d["adc_vref"] = float(min(max(graph.adc_vref, 0.1), 12.0))
         two = run_pwm_ask_link(g, SystemConfig(**_d))
     else:
         # 2-level line codes (OOK, Manchester) run through the in-circuit

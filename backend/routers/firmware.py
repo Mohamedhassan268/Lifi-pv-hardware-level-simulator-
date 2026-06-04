@@ -29,10 +29,17 @@ class FirmwareFinding(BaseModel):
     confidence: str
 
 
+class FirmwareInfo(BaseModel):
+    label: str
+    value: str
+    source: str
+
+
 class FirmwareParseResponse(BaseModel):
     role: str
     params: dict[str, float]
     findings: list[FirmwareFinding]
+    info: list[FirmwareInfo]
     warnings: list[str]
 
 
@@ -51,6 +58,10 @@ def parse(req: FirmwareParseRequest) -> FirmwareParseResponse:
                 confidence=f.confidence,
             )
             for f in r.findings
+        ],
+        info=[
+            FirmwareInfo(label=i.label, value=i.value, source=i.source)
+            for i in r.info
         ],
         warnings=r.warnings,
     )
