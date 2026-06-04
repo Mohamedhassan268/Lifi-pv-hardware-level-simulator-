@@ -137,8 +137,39 @@ export interface FeatureDatasetRequest {
   n_bits?: number;
 }
 
+export interface CoverageRequest {
+  preset?: string;
+  luminaires: { x: number; y: number }[];
+  total_power_W: number;
+  height_m: number;
+  half_extent_m: number;
+  grid: number;
+  half_angle_deg: number;
+  r_sense_ohm: number;
+  node_budget_uW: number;
+  dcdc_eff?: number;
+  ber_thresh?: number;
+}
+
+export interface CoverageResponse {
+  xs: number[];
+  BER: number[][];
+  harvest_uW: number[][];
+  snr_dB: number[][];
+  deployable: boolean[][];
+  data_cov_pct: number;
+  deployable_pct: number;
+  harvest_min_uW: number;
+  harvest_max_uW: number;
+}
+
 export const api = {
   listPresets: () => request<string[]>("/api/presets"),
+  coverage: (req: CoverageRequest) =>
+    request<CoverageResponse>("/api/coverage", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
   getFeatureSchema: () => request<FeatureSchemaResponse>("/api/features/schema"),
   featureDatasetJson: (req: FeatureDatasetRequest) =>
     request<{ param: string; rows: FeatureRow[]; schema: FeatureSchema }>(
@@ -196,7 +227,26 @@ export const api = {
       method: "POST",
       body: JSON.stringify(graph),
     }),
+  parseFirmware: (role: "tx" | "rx", source: string, filename?: string) =>
+    request<FirmwareParseResponse>("/api/firmware/parse", {
+      method: "POST",
+      body: JSON.stringify({ role, source, filename }),
+    }),
 };
+
+export interface FirmwareFinding {
+  config_field: string;
+  value: number;
+  source: string;
+  label: string;
+  confidence: string;
+}
+export interface FirmwareParseResponse {
+  role: string;
+  params: Record<string, number>;
+  findings: FirmwareFinding[];
+  warnings: string[];
+}
 
 export interface SchematicSimResponse {
   ber: number | null;

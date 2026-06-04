@@ -65,6 +65,13 @@ class CircuitGraphIn(BaseModel):
     data_rate_bps: float | None = None
     n_bits: int | None = None
     modulation: str | None = None  # "OOK" or "OOK_Manchester" (line-code schemes)
+    # PHY overrides parsed from uploaded ESP firmware (.ino). Applied to the
+    # PWM-ASK operating point when present.
+    carrier_freq_hz: float | None = None
+    pwm_freq_hz: float | None = None
+    modulation_depth: float | None = None
+    adc_bits: float | None = None
+    mcu_sample_rate_hz: float | None = None
 
 
 class SchematicSimResponse(BaseModel):
@@ -128,6 +135,17 @@ def simulate(graph: CircuitGraphIn) -> SchematicSimResponse:
             _d["distance_m"] = float(min(max(graph.distance_m, 0.01), 50.0))
         if graph.data_rate_bps is not None:
             _d["data_rate_bps"] = float(min(max(graph.data_rate_bps, 100.0), 1e5))
+        # Firmware-parsed PHY overrides (from the uploaded .ino), clamped sane.
+        if graph.carrier_freq_hz is not None:
+            _d["carrier_freq_hz"] = float(min(max(graph.carrier_freq_hz, 100.0), 1e6))
+        if graph.pwm_freq_hz is not None:
+            _d["pwm_freq_hz"] = float(max(graph.pwm_freq_hz, 0.0))
+        if graph.modulation_depth is not None:
+            _d["modulation_depth"] = float(min(max(graph.modulation_depth, 0.0), 1.0))
+        if graph.adc_bits is not None:
+            _d["adc_bits"] = int(min(max(graph.adc_bits, 1), 24))
+        if graph.mcu_sample_rate_hz is not None:
+            _d["mcu_sample_rate_hz"] = float(max(graph.mcu_sample_rate_hz, 0.0))
         two = run_pwm_ask_link(g, SystemConfig(**_d))
     else:
         # 2-level line codes (OOK, Manchester) run through the in-circuit

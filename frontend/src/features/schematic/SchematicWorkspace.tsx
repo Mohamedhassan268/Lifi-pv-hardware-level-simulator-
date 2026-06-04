@@ -13,7 +13,7 @@
 import { Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow } from "@xyflow/react";
 import { useCallback, useState } from "react";
 
-import { api } from "@/api/client";
+import { api, type FirmwareFinding } from "@/api/client";
 import { Button } from "@/primitives/Button";
 import { Card } from "@/primitives/Card";
 import { Palette } from "@/features/schematic/Palette";
@@ -57,6 +57,30 @@ export function SchematicWorkspace() {
   const [nBits, setNBits] = useState("128");
   const [modulation, setModulation] = useState("OOK");
 
+  // Per-ESP firmware: merged PHY overrides + per-role parse info for display.
+  const [firmwareParams, setFirmwareParams] = useState<Record<string, number>>({});
+  type FwInfo = { name: string; findings: FirmwareFinding[]; warnings: string[] };
+  const [firmwareInfo, setFirmwareInfo] = useState<{ tx: FwInfo | null; rx: FwInfo | null }>(
+    { tx: null, rx: null },
+  );
+
+  const onFirmware = useCallback(async (role: "tx" | "rx", file: File) => {
+    setError(null);
+    try {
+      const source = await file.text();
+      const res = await api.parseFirmware(role, source, file.name);
+      setFirmwareInfo((p) => ({
+        ...p,
+        [role]: { name: file.name, findings: res.findings, warnings: res.warnings },
+      }));
+      setFirmwareParams((p) => ({ ...p, ...res.params }));
+      if (res.params.data_rate_bps) setDataRateKbps(String(res.params.data_rate_bps / 1000));
+      setModulation("PWM_ASK"); // firmware upload implies the PoC PWM-ASK link
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
   const selected = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
   const loadPreset = useCallback(
@@ -87,6 +111,7 @@ export function SchematicWorkspace() {
       const graph = toCircuitGraph();
       const body = {
         ...graph,
+        ...firmwareParams, // carrier/pwm/mod-depth/adc/sample-rate from uploaded .ino
         distance_m: Number(distanceM) || undefined,
         data_rate_bps: (Number(dataRateKbps) || 0) * 1000 || undefined,
         n_bits: Number(nBits) || undefined,
@@ -99,7 +124,7 @@ export function SchematicWorkspace() {
     } finally {
       setRunning(false);
     }
-  }, [toCircuitGraph, distanceM, dataRateKbps, nBits, modulation]);
+  }, [toCircuitGraph, distanceM, dataRateKbps, nBits, modulation, firmwareParams]);
 
   return (
     <div className="grid h-[calc(100vh-3rem)] grid-cols-[260px_1fr_300px] gap-3 p-3">
@@ -249,6 +274,23 @@ export function SchematicWorkspace() {
         </Card>
 
         <Card>
+          <h3 className="mb-1 text-sm font-semibold uppercase tracking-wider text-slate-300">
+            ESP firmware
+          </h3>
+          <p className="mb-2 text-[10px] text-slate-500">
+            Upload each ESP&apos;s .ino — the PHY constants are parsed into the run.
+          </p>
+          {(["tx", "rx"] as const).map((role) => (
+            <FirmwareSlot
+              key={role}
+              role={role}
+              info={firmwareInfo[role]}
+              onFile={(f) => onFirmware(role, f)}
+            />
+          ))}
+        </Card>
+
+        <Card>
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
               Simulate
@@ -300,6 +342,77 @@ export function SchematicWorkspace() {
       </div>
     </div>
   );
+}
+
+// One per-ESP firmware upload slot: pick a .ino, show the parsed PHY constants.
+function FirmwareSlot({
+  role,
+  info,
+  onFile,
+}: {
+  role: "tx" | "rx";
+  info: { name: string; findings: FirmwareFinding[]; warnings: string[] } | null;
+  onFile: (f: File) => void;
+}) {
+  const label = role === "tx" ? "TX ESP" : "RX ESP";
+  return (
+    <div className="mb-2 rounded-lg border border-white/10 bg-white/[0.02] p-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-semibold text-slate-300">{label}</span>
+        <label
+          className="cursor-pointer rounded border border-white/10 bg-white/[0.04] px-2 py-0.5
+                     text-[10px] text-slate-200 hover:bg-white/[0.08]"
+        >
+          {info ? "Replace .ino" : "Upload .ino"}
+          <input
+            type="file"
+            accept=".ino,.c,.cpp,.h,.txt"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onFile(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+      </div>
+      {info && (
+        <div className="mt-1.5">
+          <p className="truncate font-mono text-[9px] text-slate-500">{info.name}</p>
+          {info.findings.length === 0 && (
+            <p className="text-[10px] text-slate-500">No PHY constants recognised.</p>
+          )}
+          <dl className="mt-1 space-y-0.5">
+            {info.findings.map((f) => (
+              <div key={f.config_field} className="flex items-center justify-between gap-2 text-[10px]">
+                <span className="text-slate-400">{f.label}</span>
+                <span className="font-mono text-emerald-300">
+                  {fmtFw(f.config_field, f.value)}
+                  {f.confidence !== "high" && (
+                    <span className="ml-1 text-slate-500">({f.confidence})</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </dl>
+          {info.warnings.map((w, i) => (
+            <p key={i} className="mt-1 text-[9px] text-harvest-300">
+              {w}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtFw(field: string, v: number): string {
+  if (["carrier_freq_hz", "pwm_freq_hz", "mcu_sample_rate_hz"].includes(field))
+    return v >= 1000 ? `${(v / 1000).toFixed(v >= 1e5 ? 0 : 1)} kHz` : `${v} Hz`;
+  if (field === "data_rate_bps") return v >= 1000 ? `${(v / 1000).toFixed(2)} kbps` : `${v} bps`;
+  if (field === "modulation_depth") return `${(v * 100).toFixed(0)}%`;
+  if (field === "adc_bits") return `${v}-bit`;
+  return String(v);
 }
 
 // Compact key diagnostics from the two-pass run (received optical power + the
