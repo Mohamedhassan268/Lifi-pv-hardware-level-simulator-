@@ -253,6 +253,7 @@ class LED5MM_WHITE(LEDBase):
         self._half_angle = 20.0          # deg
         self._junction_cap_pF = 15.0     # pF (small 5 mm die)
         self.GLED = 0.43                 # W/A (preset led_gled)
+        self.LENS_TRANSMITTANCE = 1.0    # bare 5 mm LED, no external lens
 
         # SPICE diode model: V_f ~ 2.0 V at 13.6 mA.
         self.spice_IS = 1e-15

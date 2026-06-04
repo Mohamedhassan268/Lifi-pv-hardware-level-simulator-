@@ -241,6 +241,131 @@ def is_analog_modulation(modulation: str) -> bool:
     return modulation.upper().replace("-", "_") in _ANALOG_SCHEMES
 
 
+# =============================================================================
+# PWM-ASK: in-circuit TX (BJT switch -> LED) + SPICE RX gain chain + DSP demod
+# =============================================================================
+#
+# The breadboard PoC. Unlike OOK (comparator slices in-circuit) and OFDM/BFSK
+# (Python linear-driver TX), PWM-ASK switches the LED on/off at a carrier within
+# each data bit, and the RX is an analog gain chain (PV -> AC-couple -> TL072
+# x2) read by the ESP32 ADC, where Python firmware envelope-demodulates. So this
+# is a *two-pass* co-sim (SPICE TX + SPICE RX) like OOK, but the demod is the
+# DSP (per-bit envelope) like the analog path, and the RX op-amps run on a split
+# +/-5 V supply (the ICL7660 makes the -5 V rail; VMID is the vref mid-rail).
+
+
+def _pwm_ask_gate_drive(bits: np.ndarray, t: np.ndarray, carrier_freq: float,
+                        bit_period: float, v_on: float):
+    """Carrier-gated 2-level gate drive for the BJT LED switch.
+
+    Within a bit=1 interval the LED switches on/off at ``carrier_freq`` (the
+    ASK carrier); a bit=0 interval holds it off. Mirrors _modulate_pwm_ask but
+    as the GPIO gate waveform (0 / v_on) the 2N2222 base sees through R1.
+    """
+    n_bits = len(bits)
+    bit_idx = np.clip((t / bit_period).astype(int), 0, n_bits - 1)
+    data_envelope = bits[bit_idx].astype(float)
+    carrier = ((t * carrier_freq) % 1.0 < 0.5).astype(float)
+    return v_on * data_envelope * carrier
+
+
+def run_pwm_ask_link(graph: dict, cfg) -> Optional[dict]:
+    """Two-pass PWM-ASK co-sim: SPICE TX (BJT->LED) -> Python channel ->
+    SPICE RX gain chain (split supply) -> Python envelope demod. Returns None
+    when the graph isn't a TX->RX link."""
+    part = partition_tx_rx(graph)
+    if part is None or not tx_runner.available() or not rx_runner.available():
+        return None
+
+    comps = {c["ref"]: c for c in graph["components"]}
+    net_of = _net_lookup(graph)
+    led = get_component(comps[part.led_ref]["component_type"])
+
+    # --- bits + PWM-ASK gate drive (Python owns modulation) ---
+    n_bits = int(cfg.n_bits)
+    bit_period = 1.0 / cfg.data_rate_bps
+    carrier_freq = float(getattr(cfg, "carrier_freq_hz", 10000.0))
+    t_stop = n_bits * bit_period
+    # Resolve the carrier: >= ~20 steps per carrier period.
+    t_step = min(bit_period / 50.0, 1.0 / (carrier_freq * 20.0))
+    seed = cfg.random_seed if cfg.random_seed is not None else 0
+    bits = np.random.default_rng(seed).integers(0, 2, n_bits)
+    drive_t = np.arange(0.0, t_stop, t_step)
+    drive_v = _pwm_ask_gate_drive(bits, drive_t, carrier_freq, bit_period,
+                                  v_on=3.3)  # ESP32 GPIO high
+
+    # --- pass 1: TX analog (GPIO -> R1 -> 2N2222 -> LED) -> I(LED) ---
+    # TX rail is +5 V (the LED anode rail), not the 3.3 V GPIO level.
+    tx_sub = subgraph(graph, part.tx_refs)
+    tx_res = tx_runner.run_tx_graph(
+        _collect_defs(tx_sub["components"]),
+        graph_dict_to_instances(tx_sub),
+        drive_net=part.drive_net.lower(), drive_t=drive_t, drive_v=drive_v,
+        led_ref=part.led_ref, vcc_volts=5.0,
+        t_stop_s=t_stop, t_step_s=t_step,
+    )
+    if tx_res is None:
+        return {"ber": None, "message": "TX pass failed (no I(LED))."}
+    t_tx, i_led = tx_res
+
+    # --- comms layer: I(LED) -> optical -> channel -> P_rx ---
+    p_rx = led_current_to_p_rx(led, i_led, cfg)
+
+    # --- pass 2: RX gain chain on +/-5 V; probe the ESP32 ADC node ---
+    amp_out = _find_mcu_adc(graph, net_of) or _find_amp_out(part, comps, net_of)
+    if amp_out is None:
+        return {"ber": None, "message": "No ADC/amp node to sample for PWM-ASK demod."}
+    rx_sub = subgraph(graph, part.rx_refs)
+    rx_res = rx_runner.run_graph(
+        _collect_defs(rx_sub["components"]),
+        graph_dict_to_instances(rx_sub),
+        optical_t=t_tx, optical_v=p_rx,
+        vcc_volts=5.0, vee_volts=-5.0, vref_volts=1.65,
+        t_stop_s=t_stop, t_step_s=t_step,
+        probe_nets=[amp_out.lower()],
+    )
+    if rx_res is None:
+        return {"ber": None, "message": "RX pass produced no output."}
+    _v_dout, t_rx, extras = rx_res
+    v_amp = extras.get(amp_out.lower())
+    if v_amp is None:
+        return {"ber": None, "message": f"ADC node {amp_out!r} not found in RX result."}
+
+    # --- DSP: resample to a uniform per-bit grid, add noise, envelope-demod ---
+    from cosim.modulation import demodulate
+    sps = 200  # samples per bit for the envelope integrator
+    t_uni = np.linspace(0.0, t_stop, n_bits * sps, endpoint=False)
+    v_rx = np.interp(t_uni, t_rx, v_amp)
+    i_ph = cfg.sc_responsivity * np.interp(t_uni, t_tx, p_rx)
+    std_iph = float(np.std(i_ph))
+    z_trans = float(np.std(v_rx) / std_iph) if std_iph > 0 else 0.0
+    sigma_v = float(NoiseModel.from_config(cfg).total_noise_std(i_ph, cfg.data_rate_bps) * z_trans)
+    rng = np.random.default_rng(seed + 1)
+    v_rx_noisy = v_rx + rng.normal(0.0, sigma_v, size=v_rx.shape)
+
+    n_skip = max(_SKIP_BITS, n_bits // 8)
+    score = slice(n_skip, n_bits - _SKIP_BITS)
+    bits_rx = np.asarray(demodulate("PWM_ASK", v_rx_noisy, t_uni, n_bits, config=cfg))
+    bits_rx_clean = np.asarray(demodulate("PWM_ASK", v_rx, t_uni, n_bits, config=cfg))
+    ber = float(np.mean(bits_rx[score] != bits[score]))
+    ber_clean = float(np.mean(bits_rx_clean[score] != bits[score]))
+
+    return {
+        "ber": ber,
+        "ber_incircuit": ber_clean,
+        "n_bits": int(n_bits - n_skip - _SKIP_BITS),
+        "modulation": cfg.modulation,
+        "message": f"PWM-ASK two-pass co-simulation complete (SPICE TX+RX, DSP demod)",
+        "diagnostics": {
+            "i_led_mA": [float(i_led.min() * 1e3), float(i_led.max() * 1e3)],
+            "p_rx_uW": [float(p_rx.min() * 1e6), float(p_rx.max() * 1e6)],
+            "amp_swing_mV": [float(v_amp.min() * 1e3), float(v_amp.max() * 1e3)],
+            "transimpedance_V_per_A": z_trans,
+            "noise_sigma_mV": sigma_v * 1e3,
+        },
+    }
+
+
 def _find_mcu_adc(graph: dict, net_of: dict) -> Optional[str]:
     """Net wired to an MCU node's `adc` pin — the explicit point where the
     digital baseband (the ESP/Arduino) samples the analog signal. Lets the user

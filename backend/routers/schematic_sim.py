@@ -28,7 +28,7 @@ from cosim.graph_netlist import graph_dict_to_instances
 from cosim.system_config import SystemConfig
 from cosim.pipeline import SimulationPipeline
 from cosim import pyspice_graph_runner
-from cosim.schematic_cosim import run_two_pass, run_analog_link
+from cosim.schematic_cosim import run_two_pass, run_analog_link, run_pwm_ask_link
 from components import get_component
 
 router = APIRouter()
@@ -117,6 +117,18 @@ def simulate(graph: CircuitGraphIn) -> SchematicSimResponse:
         if graph.distance_m is not None:
             _d["distance_m"] = float(min(max(graph.distance_m, 0.01), 50.0))
         two = run_analog_link(g, SystemConfig(**_d))
+    elif _mod == "PWM_ASK":
+        # Breadboard PoC: SPICE TX (2N2222 -> LED) + SPICE RX gain chain on a
+        # split +/-5 V supply + Python envelope demod. Operating point comes
+        # from the lifi_poc_breadboard preset (10 kHz carrier, +/-5 V rails).
+        _d = SystemConfig.from_preset("lifi_poc_breadboard").to_dict()
+        _d["dcdc_enable"] = False
+        _d["n_bits"] = int(min(max(graph.n_bits or 48, 24), 400))
+        if graph.distance_m is not None:
+            _d["distance_m"] = float(min(max(graph.distance_m, 0.01), 50.0))
+        if graph.data_rate_bps is not None:
+            _d["data_rate_bps"] = float(min(max(graph.data_rate_bps, 100.0), 1e5))
+        two = run_pwm_ask_link(g, SystemConfig(**_d))
     else:
         # 2-level line codes (OOK, Manchester) run through the in-circuit
         # comparator path; anything unrecognised falls back to OOK.
