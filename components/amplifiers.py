@@ -565,6 +565,114 @@ Bout OUT 0 V = max(min(V(pole_out), V(VCC)-{self._output_swing_margin}), V(VEE)+
 
 
 # =============================================================================
+# TL072 - DUAL JFET-INPUT OP-AMP (breadboard PoC RX gain chain)
+# =============================================================================
+
+class TL072(AmplifierBase):
+    """
+    Texas Instruments TL072 Dual Low-Noise JFET-Input Op-Amp.
+
+    Used in the breadboard LiFi PoC RX as a two-stage gain block (U1a unity
+    buffer + U1b non-inverting, G = 1 + R6/R5 = 23), powered from +/-5 V (the
+    ICL7660 charge pump makes the -5 V). Each placed instance is one of the
+    two op-amps in the package.
+
+    Datasheet Parameters (TI TL072, SLOS080):
+        - Supply: +/-5 V to +/-18 V (we use +/-5 V)
+        - GBW: 3 MHz
+        - Slew rate: 13 V/us
+        - Input voltage noise: 18 nV/rtHz
+        - Input bias current: 65 pA (JFET input)
+        - Open-loop gain: ~200 V/mV (106 dB)
+
+    SPICE model: a transconductance -> dominant-pole -> buffered-output
+    macromodel with a diode rail clamp. Unlike the max(min(...)) behavioral
+    clamp used by the single-supply parts here, this *converges with external
+    feedback* in libngspice (the gain node has finite impedance, and the output
+    clamp is a smooth diode, not a discontinuous limiter) - which the two-stage
+    feedback gain chain requires.
+    """
+
+    A_OL = 2.0e5  # open-loop DC gain (~106 dB)
+    _GM = 1e-3    # input transconductance (A/V); Rg, Cg derive from A_OL/GBW
+
+    def __init__(self, R_feedback: float = 22e3):
+        super().__init__(R_feedback)
+        self._gbw_Hz = 3e6           # 3 MHz
+        self._slew_rate_Vps = 13e6   # 13 V/us
+        self._input_noise_V = 18e-9  # 18 nV/rtHz
+        self._input_noise_A = 0.01e-12  # 0.01 pA/rtHz (JFET)
+        self._input_bias_A = 65e-12  # 65 pA
+        self._supply_min = 5.0       # +/-5 V minimum split supply
+        self._supply_max = 18.0
+
+    @property
+    def name(self) -> str:
+        return "TL072"
+
+    @property
+    def gain_bandwidth_product(self) -> float:
+        return self._gbw_Hz
+
+    @property
+    def slew_rate(self) -> float:
+        return self._slew_rate_Vps
+
+    @property
+    def input_noise_voltage(self) -> float:
+        return self._input_noise_V
+
+    @property
+    def input_noise_current(self) -> float:
+        return self._input_noise_A
+
+    @property
+    def input_bias_current(self) -> float:
+        return self._input_bias_A
+
+    def spice_subcircuit(self) -> str:
+        """Convergent op-amp macromodel (INP INN OUT VCC VEE).
+
+        Gm converts the differential input to a current into a high-impedance
+        gain node (Rg||Cg); A_OL = Gm*Rg, dominant pole f_p = GBW/A_OL. A unity
+        buffer drives OUT through Rout, with diodes clamping OUT to the rails.
+        """
+        gm = self._GM
+        Rg = self.A_OL / gm
+        Cg = gm / (2 * np.pi * self._gbw_Hz)  # = 1/(2*pi*Rg*f_p)
+        return f"""\
+* TL072 JFET-input op-amp - convergent Gm-pole-buffer macromodel
+* A_OL = {self.A_OL:.0e}, GBW = {self._gbw_Hz/1e6:.0f} MHz
+.SUBCKT TL072 INP INN OUT VCC VEE
+Gm 0 n1 INP INN {gm:.4e}
+Rg n1 0 {Rg:.4e}
+Cg n1 0 {Cg:.4e}
+Eb nbuf 0 n1 0 1
+Rout nbuf OUT 75
+Dh OUT VCC TL072_CL
+Dl VEE OUT TL072_CL
+.MODEL TL072_CL D(IS=1e-12 N=0.01)
+.ENDS TL072"""
+
+    def get_parameters(self) -> Dict[str, Any]:
+        return {
+            'name': self.name,
+            'type': 'operational_amplifier',
+            'GBW_Hz': self._gbw_Hz,
+            'open_loop_gain': self.A_OL,
+            'slew_rate_Vps': self._slew_rate_Vps,
+            'input_noise_voltage_VrtHz': self._input_noise_V,
+            'input_noise_current_ArtHz': self._input_noise_A,
+            'input_bias_current_A': self._input_bias_A,
+            'supply_min_V': self._supply_min,
+            'supply_max_V': self._supply_max,
+        }
+
+    def __repr__(self):
+        return f"TL072(GBW={self._gbw_Hz/1e6:.0f}MHz, A_OL={self.A_OL:.0e})"
+
+
+# =============================================================================
 # SELF-TEST
 # =============================================================================
 

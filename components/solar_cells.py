@@ -408,6 +408,80 @@ class SM141K(PhotodetectorBase):
 
 
 # =============================================================================
+# PV_PANEL_5V1W - SMALL POLY-Si PANEL (breadboard PoC receiver)
+# =============================================================================
+
+class PV_PANEL_5V1W(PhotodetectorBase):
+    """
+    Small 5-6 V / 1 W polycrystalline-Si panel (breadboard PoC receiver).
+
+    The optical front-end of the PoC: PV positive -> R3 (1k load) and AC-coupled
+    (C1) into the TL072 gain chain. Parameters match
+    presets/lifi_poc_breadboard.json (sc_area_cm2 25, responsivity 0.40,
+    Cj 50 nF, Rsh 100 kohm).
+    """
+
+    def __init__(self, temperature_K: float = 300.0, reverse_bias_V: float = 0.0):
+        super().__init__(temperature_K, reverse_bias_V)
+        self._material = SILICON
+        self._area_cm2 = 25.0
+        self._voc = 5.5             # small series string, ~5-6 V open circuit
+        self._responsivity = 0.40   # A/W (preset sc_responsivity)
+        self._capacitance_nF = 50.0  # preset sc_cj_nF
+        self._shunt_resistance = 100e3  # preset sc_rsh_kOhm
+        self._series_resistance = 1.0
+        self._dark_current_nA = 100.0
+
+    @property
+    def name(self) -> str:
+        return "PV_PANEL_5V1W"
+
+    @property
+    def active_area_m2(self) -> float:
+        return self._area_cm2 * 1e-4
+
+    @property
+    def responsivity(self) -> float:
+        return self._responsivity
+
+    @property
+    def capacitance(self) -> float:
+        return self._capacitance_nF * 1e-9
+
+    @property
+    def dark_current(self) -> float:
+        return self._dark_current_nA * 1e-9
+
+    @property
+    def shunt_resistance(self) -> float:
+        return self._shunt_resistance
+
+    @property
+    def series_resistance(self) -> float:
+        return self._series_resistance
+
+    def get_parameters(self) -> Dict[str, Any]:
+        return {
+            'name': self.name,
+            'type': 'solar_cell',
+            'material': 'poly-Si',
+            'active_area_m2': self.active_area_m2,
+            'responsivity': self.responsivity,
+            'capacitance': self.capacitance,
+            'dark_current': self.dark_current,
+            'shunt_resistance': self.shunt_resistance,
+            'series_resistance': self.series_resistance,
+            'open_circuit_voltage_V': self._voc,
+            'bandwidth_1kohm': self.bandwidth(1000),
+            'temperature_K': self.temperature_K,
+        }
+
+    def __repr__(self):
+        return (f"PV_PANEL_5V1W(R={self.responsivity:.2f}A/W, "
+                f"C={self.capacitance*1e9:.0f}nF, area={self._area_cm2:.0f}cm2)")
+
+
+# =============================================================================
 # GENERIC PARAMETRIC MODELS
 # =============================================================================
 

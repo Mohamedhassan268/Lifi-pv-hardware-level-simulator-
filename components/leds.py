@@ -224,6 +224,109 @@ class LXM5_PD01(LEDBase):
 
 
 # =============================================================================
+# LED5MM_WHITE - GENERIC 5mm WHITE LED (breadboard PoC transmitter)
+# =============================================================================
+
+class LED5MM_WHITE(LEDBase):
+    """
+    Generic 5 mm white through-hole LED (breadboard PoC transmitter).
+
+    Switched by the 2N2222 low-side driver: D1 anode at +5 V, cathode through
+    R_LED (220 ohm) to the BJT collector. The netlist's bias point is
+    I_LED = (5 V - V_f) / 220 ohm ~ 13.6 mA at the stated V_f ~ 2 V.
+
+    Parameters (matching presets/lifi_poc_breadboard.json):
+        - Radiated optical power: ~6 mW at the bias point
+        - GLED ~ 0.43 W/A (optical power per drive current)
+        - Half-angle: 20 deg (typical 5 mm clear lens)
+        - Forward voltage: ~2 V at the bias current (netlist's stated value)
+    """
+
+    def __init__(self, temperature_K: float = 300.0):
+        super().__init__(temperature_K)
+        self._peak_wavelength = 550.0    # nm (white, broad)
+        self._spectral_width = 100.0     # nm FWHM (phosphor white)
+        self._max_current = 0.030        # A (30 mA typical 5 mm)
+        self._bias_current = 0.0136      # A (netlist operating point)
+        self._forward_voltage_V = 2.0    # V at bias (netlist assumption)
+        self._radiant_flux = 6.0e-3      # W radiated at bias
+        self._half_angle = 20.0          # deg
+        self._junction_cap_pF = 15.0     # pF (small 5 mm die)
+        self.GLED = 0.43                 # W/A (preset led_gled)
+
+        # SPICE diode model: V_f ~ 2.0 V at 13.6 mA.
+        self.spice_IS = 1e-15
+        self.spice_N = 2.5
+        self.spice_RS = 3.0
+        self.spice_CJO = self._junction_cap_pF * 1e-12
+
+    @property
+    def name(self) -> str:
+        return "LED5MM_WHITE"
+
+    @property
+    def peak_wavelength_nm(self) -> float:
+        return self._peak_wavelength
+
+    @property
+    def spectral_width_nm(self) -> float:
+        return self._spectral_width
+
+    @property
+    def max_drive_current_A(self) -> float:
+        return self._max_current
+
+    @property
+    def forward_voltage(self) -> float:
+        return self._forward_voltage_V
+
+    @property
+    def viewing_angle_deg(self) -> float:
+        return self._half_angle * 2  # viewing angle = full angle
+
+    @property
+    def radiant_flux_W(self) -> float:
+        return self._radiant_flux
+
+    @property
+    def junction_capacitance(self) -> float:
+        return self._junction_cap_pF * 1e-12
+
+    def optical_power_from_current(self, I_drive: float) -> float:
+        """Linear optical model: P = GLED * I_drive."""
+        return self.GLED * I_drive
+
+    def spice_model_string(self) -> str:
+        return (f".MODEL LED5MM_WHITE_D D("
+                f"IS={self.spice_IS:.2e} N={self.spice_N} RS={self.spice_RS} "
+                f"CJO={self.spice_CJO:.2e})")
+
+    def get_parameters(self) -> Dict[str, Any]:
+        return {
+            'name': self.name,
+            'type': 'LED',
+            'peak_wavelength_nm': self.peak_wavelength_nm,
+            'spectral_width_nm': self.spectral_width_nm,
+            'radiant_flux_W': self.radiant_flux_W,
+            'GLED': self.GLED,
+            'forward_voltage_V': self.forward_voltage,
+            'max_drive_current_A': self.max_drive_current_A,
+            'bias_current_A': self._bias_current,
+            'junction_capacitance_F': self.junction_capacitance,
+            'viewing_angle_deg': self.viewing_angle_deg,
+            'half_angle_deg': self._half_angle,
+            'lambertian_order': self.lambertian_order(),
+            'modulation_bandwidth_Hz': self.modulation_bandwidth(),
+            'spice_model': self.spice_model_string(),
+            'temperature_K': self.temperature_K,
+        }
+
+    def __repr__(self):
+        return (f"LED5MM_WHITE(Pe={self._radiant_flux*1e3:.1f}mW, "
+                f"theta_half={self._half_angle:.0f}deg)")
+
+
+# =============================================================================
 # SELF-TEST
 # =============================================================================
 

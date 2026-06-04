@@ -55,6 +55,7 @@ from .solar_cells import (
     KXOB25_04X3F,
     SM141K,
     GenericGaAsPV,
+    PV_PANEL_5V1W,
 )
 
 # Photodiodes
@@ -68,6 +69,7 @@ from .photodiodes import (
 # LEDs
 from .leds import (
     LXM5_PD01,
+    LED5MM_WHITE,
 )
 
 # Amplifiers
@@ -76,6 +78,13 @@ from .amplifiers import (
     TLV2379,
     ADA4891,
     OPA380,
+    TL072,
+)
+
+# Discrete semiconductors (breadboard PoC)
+from .discretes import (
+    BJT2N2222,
+    ZenerBZX84C3V3,
 )
 
 # Power management (Phase 6C)
@@ -113,6 +122,7 @@ __all__ = [
     'KXOB25_04X3F',
     'SM141K',
     'GenericGaAsPV',
+    'PV_PANEL_5V1W',
 
     # Photodiodes
     'BPW34',
@@ -122,12 +132,18 @@ __all__ = [
 
     # LEDs
     'LXM5_PD01',
+    'LED5MM_WHITE',
 
     # Amplifiers
     'INA322',
     'TLV2379',
     'ADA4891',
     'OPA380',
+    'TL072',
+
+    # Discrete semiconductors
+    'BJT2N2222',
+    'ZenerBZX84C3V3',
 
     # Comparators
     'TLV7011',
@@ -153,6 +169,7 @@ COMPONENT_REGISTRY = {
     'KXOB25-04X3F': KXOB25_04X3F,
     'KXOB25_04X3F': KXOB25_04X3F,
     'SM141K': SM141K,
+    'PV_PANEL_5V1W': PV_PANEL_5V1W,
 
     # Photodiodes
     'BPW34': BPW34,
@@ -162,12 +179,18 @@ COMPONENT_REGISTRY = {
     # LEDs
     'LXM5-PD01': LXM5_PD01,
     'LXM5_PD01': LXM5_PD01,
+    'LED5MM_WHITE': LED5MM_WHITE,
 
     # Amplifiers
     'INA322': INA322,
     'TLV2379': TLV2379,
     'ADA4891': ADA4891,
     'OPA380': OPA380,
+    'TL072': TL072,
+
+    # Discrete semiconductors (breadboard PoC)
+    'BJT_2N2222': BJT2N2222,
+    'BZX84C3V3': ZenerBZX84C3V3,
 
     # Comparators
     'TLV7011': TLV7011,
