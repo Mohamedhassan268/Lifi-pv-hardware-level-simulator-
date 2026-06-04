@@ -129,9 +129,49 @@ export function MetricsCard() {
         </div>
       )}
 
+      {/* Energy harvest: raw PV cell power vs load-regulated DC-DC output.
+          They diverge — the converter output is lower and stays flat under
+          regulation while raw harvest rises. */}
+      {(() => {
+        const feat = metrics?.features;
+        const raw = numFeat(feat?.harvested_power_W);
+        if (raw == null) return null;
+        const out = numFeat(feat?.dcdc_output_power_W);
+        const eff = numFeat(feat?.dcdc_efficiency);
+        return (
+          <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+            <p className="mb-2 text-[10px] uppercase tracking-wider text-slate-500">
+              Energy harvest
+            </p>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <dt className="text-slate-400">Raw PV cell</dt>
+              <dd className="text-right font-mono text-harvest-300">
+                {(raw * 1e6).toFixed(1)} µW
+              </dd>
+              <dt className="text-slate-400">DC-DC output</dt>
+              <dd className="text-right font-mono text-harvest-300">
+                {out != null ? `${(out * 1e6).toFixed(1)} µW` : "—"}
+              </dd>
+              {eff != null && (
+                <>
+                  <dt className="text-slate-400">Efficiency</dt>
+                  <dd className="text-right font-mono text-slate-300">
+                    {(eff * 100).toFixed(1)} %
+                  </dd>
+                </>
+              )}
+            </dl>
+          </div>
+        );
+      })()}
+
       {metrics?.engine && (
         <p className="mt-4 text-xs text-slate-500">engine: {metrics.engine}</p>
       )}
     </Card>
   );
+}
+
+function numFeat(v: number | string | null | undefined): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }

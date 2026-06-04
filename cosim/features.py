@@ -75,7 +75,8 @@ FEATURES: dict[str, dict[str, str]] = {
     "channel_gain":        {"label": "Channel gain", "unit": "", "group": "Power & energy", "desc": "Optical channel DC gain (P_rx/P_tx)."},
     "path_loss_dB":        {"label": "Path loss", "unit": "dB", "group": "Power & energy", "desc": "Optical path loss = −10·log10(channel gain)."},
     "i_ph_avg_uA":         {"label": "Photocurrent", "unit": "µA", "group": "Power & energy", "desc": "Mean photodiode/PV photocurrent."},
-    "harvested_power_W":   {"label": "Harvested power", "unit": "W", "group": "Power & energy", "desc": "Mean PV electrical output power (NaN if no PV model)."},
+    "harvested_power_W":   {"label": "Harvested power", "unit": "W", "group": "Power & energy", "desc": "Raw mean PV cell electrical output power (NaN if no PV model)."},
+    "dcdc_output_power_W": {"label": "DC-DC output power", "unit": "W", "group": "Power & energy", "desc": "Load-regulated DC-DC converter output power (NaN if disabled). Lower than raw harvest; stays flat under regulation while raw harvest rises."},
     "dcdc_efficiency":     {"label": "DC-DC efficiency", "unit": "", "group": "Power & energy", "desc": "Harvester DC-DC converter efficiency (NaN if disabled)."},
     "energy_per_bit_J":    {"label": "Energy per bit", "unit": "J", "group": "Power & energy", "desc": "Received optical energy per bit = P_rx / data rate."},
 
@@ -284,6 +285,7 @@ def extract_features(result: dict, cfg) -> dict:
         "path_loss_dB": path_loss,
         "i_ph_avg_uA": _f(result.get("I_ph_avg_uA")),
         "harvested_power_W": harvested,
+        "dcdc_output_power_W": _f(result.get("dcdc_P_out_uW")) * 1e-6,
         "dcdc_efficiency": _f(result.get("dcdc_efficiency")),
         "energy_per_bit_J": energy_per_bit,
         # Signal stats
