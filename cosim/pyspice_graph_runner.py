@@ -57,6 +57,8 @@ def run_graph(
     t_stop_s: float,
     t_step_s: Optional[float] = None,
     probe_nets: Optional[List[str]] = None,
+    vee_volts: float = 0.0,
+    vref_volts: Optional[float] = None,
 ) -> Optional[tuple]:
     """Simulate a user circuit and return ``(V(dout), t, extras)``, or None.
 
@@ -64,10 +66,14 @@ def run_graph(
         subckt_defs: concatenated .SUBCKT bodies for placed library parts.
         instance_lines: the graph's element cards (Xref n.. TYPE, R, V).
         optical_t, optical_v: optical-power PWL driving the `optical_power` node.
-        vcc_volts: supply rail voltage (vcc; vee=0; vref=vcc/2).
+        vcc_volts: positive supply rail voltage (net ``vcc``).
         t_stop_s, t_step_s: transient window.
         probe_nets: extra net names to return in ``extras`` (e.g. the comparator
             input / threshold for post-processing). Missing nets are skipped.
+        vee_volts: negative/return supply rail (net ``vee``). Defaults to 0 for
+            single-supply circuits; set to e.g. -5 for a split supply (an
+            ICL7660 charge-pump making the negative rail).
+        vref_volts: mid-rail reference (net ``vref``). Defaults to vcc/2.
 
     Returns:
         ``(v_dout, time, extras)`` where ``extras`` maps each found probe net to
@@ -79,6 +85,7 @@ def run_graph(
     from PySpice.Spice.Netlist import Circuit
 
     t_step = float(t_step_s if t_step_s is not None else t_stop_s / 1000.0)
+    vref = float(vref_volts if vref_volts is not None else vcc_volts / 2.0)
 
     circuit = Circuit('OptiSim_schematic')
     if subckt_defs.strip():
@@ -86,8 +93,8 @@ def run_graph(
 
     # Power rails + reference (graph supply pins resolve to these net names).
     circuit.raw_spice += f'Vcc vcc 0 DC {vcc_volts}\n'
-    circuit.raw_spice += 'Vee vee 0 DC 0\n'
-    circuit.raw_spice += f'Vref vref 0 DC {vcc_volts / 2.0}\n'
+    circuit.raw_spice += f'Vee vee 0 DC {vee_volts}\n'
+    circuit.raw_spice += f'Vref vref 0 DC {vref}\n'
 
     # Optical input bridge from the Python channel.
     pwl = _pwl_string(optical_t, optical_v)
