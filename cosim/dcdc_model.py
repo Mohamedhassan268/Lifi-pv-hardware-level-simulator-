@@ -137,30 +137,44 @@ class BoostConverter:
 
         # CCM boundary current
         I_LB = self.ccm_boundary_current(V_in, D)
+        T_sw = 1.0 / self.f_sw
 
-        # Determine operating mode
+        # Determine operating mode and the inductor-current waveform stats.
+        # CCM and DCM have fundamentally different inductor currents, so the
+        # ripple/RMS (which set the I²R losses) must be derived per mode — using
+        # the CCM ripple in DCM massively over-charges the inductor at light
+        # loads and produces nonsense losses.
         if I_load > I_LB:
             mode = 'CCM'
             V_out = V_out_target
+            # Continuous triangle: DC level I_load/(1-D) + ripple ΔI = V_in·D·T/L.
+            delta_I_L = V_in * D * T_sw / self.L
+            I_L_avg = I_load / (1 - D)
+            I_L_peak = I_L_avg + delta_I_L / 2
+            I_L_rms = np.sqrt(I_L_avg ** 2 + (delta_I_L ** 2) / 12)
         else:
             mode = 'DCM'
-            # DCM output voltage from energy balance:
-            # V_out = V_in * (1 + sqrt(1 + 4*D^2 / (2*L*f_sw*I_load/V_in))) / 2
-            # Simplified: V_out ≈ V_in * (1 + D * sqrt(R_load / (2*L*f_sw)))
             K = 2 * self.L * self.f_sw / self.R_load
-            M = (1 + np.sqrt(1 + 4 * D ** 2 / K)) / 2
-            V_out = V_in * M
-            V_out = min(V_out, V_out_target)  # Clamp to target
+            # Open-loop DCM gain at the CCM-ideal duty.
+            M_open = (1 + np.sqrt(1 + 4 * D ** 2 / K)) / 2
+            if V_in * M_open >= V_out_target:
+                # Regulated: the controller shrinks the on-time so the output
+                # holds the target. Invert M = (1+√(1+4D²/K))/2 → D = √(K·M·(M−1)).
+                V_out = V_out_target
+                M = V_out / V_in
+                D = float(np.clip(np.sqrt(max(K * M * (M - 1.0), 0.0)), 1e-4, 0.95))
+            else:
+                # Can't reach the target — runs open-loop below it.
+                V_out = V_in * M_open
             I_load = V_out / self.R_load
-            I_L_avg = I_load / (1 - D) if D < 1 else I_load
-
-        # Inductor current ripple (CCM)
-        T_sw = 1.0 / self.f_sw
-        delta_I_L = V_in * D * T_sw / self.L
-        I_L_peak = I_L_avg + delta_I_L / 2
-
-        # RMS inductor current (triangular ripple in CCM)
-        I_L_rms = np.sqrt(I_L_avg ** 2 + (delta_I_L ** 2) / 12)
+            # Triangular pulse each cycle: 0 → I_pk over D·T (charge), I_pk → 0
+            # over D2·T (discharge, volt-second balance), idle the rest.
+            I_L_peak = V_in * D * T_sw / self.L
+            D2 = D * V_in / max(V_out - V_in, 1e-9)
+            conduction = min(D + D2, 1.0)            # fraction of period carrying current
+            I_L_avg = 0.5 * I_L_peak * conduction
+            I_L_rms = I_L_peak * np.sqrt(conduction / 3.0)
+            delta_I_L = I_L_peak                     # peak-to-peak = the full pulse
 
         # --- Loss model ---
 
