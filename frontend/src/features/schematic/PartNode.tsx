@@ -128,6 +128,17 @@ const SYMBOL_PINS: Partial<Record<SymbolKey, SymbolPins>> = {
     signal_out: [{ x: 52, y: 12, side: R }],
     signal: [{ x: 52, y: 28, side: R }],
   },
+  // NPN BJT: base left, collector top, emitter bottom (ports: collector, base,
+  // emitter -> roles signal, signal_in, signal, so signal[0]=collector top and
+  // signal[1]=emitter bottom).
+  transistor: {
+    signal: [{ x: 44, y: 3, side: T }, { x: 44, y: 37, side: B }],
+    signal_in: [{ x: 6, y: 20, side: L }],
+  },
+  // Diode / Zener: anode lead left, cathode (bar) lead right.
+  diode: {
+    signal: [{ x: 4, y: 20, side: L }, { x: 60, y: 20, side: R }],
+  },
   mcu: {
     signal_in: [{ x: 6, y: 14, side: L }],
     signal_out: [{ x: 58, y: 14, side: R }],

@@ -308,46 +308,47 @@ const BREADBOARD_POC: CanvasPreset = {
       ports("BZX84C3V3"),
     ]);
 
+    // Compact, rails-adjacent layout. Each VCC/VREF flag sits directly above
+    // the pin it feeds (its pin points down); each VEE/GND flag sits directly
+    // below (pin points up) -> short vertical rail stubs, no long crossings.
+    // TX is a vertical common-emitter column; RX flows left->right.
     const nodes: Node<PartNodeData>[] = [
-      // --- TX lane ---
-      node("Vdrv", "DRIVE", "DRIVE", "ESP32 GPIO25", "PWM_ASK", "", P.drive, 20, 200),
-      node("R1", "R", "R", "R1", "R", "", P.twoTerm, 180, 200, "1k"),
-      node("Xq1", "BJT_2N2222", "BJT_2N2222", "2N2222", "BJT_2N2222", "BJT", bjtP, 320, 220),
-      node("Rled", "R", "R", "R_LED", "R", "", P.twoTerm, 320, 90, "220"),
-      node("Xled", "LED5MM_WHITE", "LED5MM_WHITE", "5mm white LED", "LED5MM_WHITE", "LED", ledP, 320, 10),
-      rail("VccLED", "VCC", 320, -70),
-      rail("GndE", "GND", 360, 330),
-      // --- channel marker ---
-      node("Ch1", "CHANNEL", "CHANNEL", "Optical link", "optical", "", P.channel, 470, 130),
-      // --- RX front end ---
-      node("Xpv", "PV_PANEL_5V1W", "PV_PANEL_5V1W", "PV panel", "PV_PANEL_5V1W", "Solar Cell", pvP, 600, 150),
-      node("R3", "R", "R", "R3 load", "R", "", P.twoTerm, 760, 240, "1k"),
-      rail("GndPV", "GND", 770, 330),
-      node("C1", "C", "C", "C1 couple", "C", "", P.twoTerm, 760, 120, "100n"),
-      node("R4", "R", "R", "R4 bias", "R", "", P.twoTerm, 760, 40, "1Meg"),
-      rail("VrefR4", "VREF", 760, -40),
-      // --- TL072 stage 1: unity buffer ---
-      node("Xu1a", "TL072", "TL072", "TL072 U1a (buffer)", "TL072", "Amplifier", opP, 900, 110),
-      rail("VccA", "VCC", 900, 20),
-      rail("VeeA", "VEE", 900, 250),
-      // --- TL072 stage 2: non-inverting G=23 ---
-      node("Xu1b", "TL072", "TL072", "TL072 U1b (G=23)", "TL072", "Amplifier", opP, 1080, 110),
-      rail("VccB", "VCC", 1080, 20),
-      rail("VeeB", "VEE", 1080, 250),
-      node("R6", "R", "R", "R6 fb", "R", "", P.twoTerm, 1080, -30, "22k"),
-      node("R5", "R", "R", "R5", "R", "", P.twoTerm, 1010, -110, "1k"),
-      rail("VrefR5", "VREF", 1010, -190),
-      // --- output coupling + ADC protection ---
-      node("C2", "C", "C", "C2 couple", "C", "", P.twoTerm, 1240, 110, "1u"),
-      node("Rbias", "R", "R", "R_VMID", "R", "", P.twoTerm, 1240, 30, "100k"),
-      rail("VrefRb", "VREF", 1240, -50),
-      node("R9", "R", "R", "R9", "R", "", P.twoTerm, 1380, 110, "1k"),
-      node("Xd2", "BZX84C3V3", "BZX84C3V3", "BZX84C3V3 clamp", "BZX84C3V3", "Zener", znP, 1380, 220),
-      rail("GndZ", "GND", 1420, 320),
+      // --- TX: common-emitter LED driver (VCC -> LED -> R_LED -> BJT -> GND) ---
+      rail("VccLED", "VCC", 250, 40),
+      node("Xled", "LED5MM_WHITE", "LED5MM_WHITE", "5mm white LED", "LED5MM_WHITE", "LED", ledP, 230, 110),
+      node("Rled", "R", "R", "R_LED", "R", "", P.twoTerm, 230, 190, "220"),
+      node("Xq1", "BJT_2N2222", "BJT_2N2222", "2N2222", "BJT_2N2222", "BJT", bjtP, 250, 270),
+      rail("GndE", "GND", 262, 380),
+      node("R1", "R", "R", "R1", "R", "", P.twoTerm, 110, 285, "1k"),
+      node("Vdrv", "DRIVE", "DRIVE", "ESP32 GPIO25", "PWM_ASK", "", P.drive, 0, 280),
+      // --- RX front end: PV -> R3 load + C1 couple -> R4 bias ---
+      node("Xpv", "PV_PANEL_5V1W", "PV_PANEL_5V1W", "PV panel", "PV_PANEL_5V1W", "Solar Cell", pvP, 430, 270),
+      node("R3", "R", "R", "R3 load", "R", "", P.twoTerm, 430, 380, "1k"),
+      rail("GndPV", "GND", 442, 470),
+      node("C1", "C", "C", "C1 couple", "C", "", P.twoTerm, 560, 280),
+      node("R4", "R", "R", "R4 bias", "R", "", P.twoTerm, 560, 185, "1Meg"),
+      rail("VrefR4", "VREF", 622, 110),
+      // --- TL072 U1a: unity buffer ---
+      node("Xu1a", "TL072", "TL072", "TL072 U1a (buffer)", "TL072", "Amplifier", opP, 690, 270),
+      rail("VccA", "VCC", 712, 185),
+      rail("VeeA", "VEE", 712, 370),
+      // --- TL072 U1b: non-inverting G=23 (R5 to VMID, R6 feedback) ---
+      node("Xu1b", "TL072", "TL072", "TL072 U1b (G=23)", "TL072", "Amplifier", opP, 890, 270),
+      rail("VccB", "VCC", 912, 185),
+      rail("VeeB", "VEE", 912, 370),
+      node("R6", "R", "R", "R6 fb", "R", "", P.twoTerm, 880, 175, "22k"),
+      node("R5", "R", "R", "R5", "R", "", P.twoTerm, 790, 110, "1k"),
+      rail("VrefR5", "VREF", 852, 40),
+      // --- output coupling + VMID re-bias + ADC protection ---
+      node("C2", "C", "C", "C2 couple", "C", "", P.twoTerm, 1030, 280),
+      node("Rbias", "R", "R", "R_VMID", "R", "", P.twoTerm, 1030, 185, "100k"),
+      rail("VrefRb", "VREF", 1092, 110),
+      node("R9", "R", "R", "R9", "R", "", P.twoTerm, 1150, 280, "1k"),
+      node("Xd2", "BZX84C3V3", "BZX84C3V3", "BZX84C3V3 clamp", "BZX84C3V3", "Zener", znP, 1150, 380),
+      rail("GndZ", "GND", 1162, 470),
       node("Mcu", "MCU", "MCU", "ESP32 ADC (GPIO34)", "demod", "", [
         { name: "adc", role: "signal_in" },
-        { name: "gpio", role: "signal_out" },
-      ], 1520, 110),
+      ], 1280, 270),
     ];
 
     const edges: Edge[] = [
@@ -358,8 +359,6 @@ const BREADBOARD_POC: CanvasPreset = {
       wire("Rled", "1", "Xled", "cathode"),
       wire("Xled", "anode", "VccLED", "v"),
       wire("Xq1", "emitter", "GndE", "gnd"),
-      // optical link marker -> PV
-      wire("Ch1", "rx", "Xpv", "photo_in"),
       // --- RX front end: PV(+)=anode -> R3 load + C1 couple; cathode to GND ---
       wire("Xpv", "anode", "R3", "1"),
       wire("Xpv", "anode", "C1", "1"),
