@@ -217,11 +217,27 @@ def _parse_tx(src: str, syms: dict[str, float], res: ParseResult) -> None:
         if len(args) >= 3 and (rb := _resolve(args[2], syms)):
             res.add_info(InfoItem("PWM resolution", f"{int(rb)}-bit", "ledcSetup(...)"))
 
-    # Modulation depth (explicit only).
+    # Modulation depth: an explicit MOD_DEPTH wins; otherwise derive it from the
+    # span of the PWM-ASK duty levels.
     hit = _find_symbol(syms, "mod", "depth") or _find_symbol(syms, "modulation", "index")
     if hit:
         d = hit[1] / 100.0 if hit[1] > 1.0 else hit[1]
         res.add(Finding("modulation_depth", round(d, 4), hit[0], "Modulation depth"))
+
+    # PWM-ASK symbol duty levels (e.g. DUTY_A/B/C = 25/50/75). Report them, and
+    # if no explicit depth was found, derive it from the min/max:
+    #   depth = (d_max - d_min) / (d_max + d_min)   (optical-power contrast).
+    duties = sorted(v for name, v in syms.items()
+                    if re.search(r"duty", name, re.I) and 0 < v <= 100)
+    if duties:
+        res.add_info(InfoItem("PWM duty levels",
+                              "/".join(str(int(v)) for v in duties) + "%", "DUTY_*"))
+        if "modulation_depth" not in res.params and len(duties) >= 2:
+            d_min, d_max = duties[0], duties[-1]
+            if d_max + d_min > 0:
+                depth = (d_max - d_min) / (d_max + d_min)
+                res.add(Finding("modulation_depth", round(depth, 4),
+                                "duty span", "Modulation depth (from duty levels)", "medium"))
 
     # LED bias current (mA or A) and radiated optical power (mW).
     hit = _find_symbol(syms, "(led|bias|drive)", "current", "ma") or _find_symbol(syms, "current", "ma")
