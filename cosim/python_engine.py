@@ -256,20 +256,30 @@ def run_python_simulation(config, bits_override=None,
         pv_model = PVCellModel.from_config(cfg)
         pv_result = pv_model.simulate(t, P_rx, R_load=cfg.r_sense_ohm)
         I_ph = pv_result.I_cell
-        # Ambient light is extra DC optical power on the same cell: it shifts the
-        # operating point and adds harvested power. Model its harvest effect on a
-        # second (cheap) solve over the total incident light, leaving the data +
-        # noise path on the LED-only solve — ambient's *data* impact already enters
-        # as shot noise (NoiseModel source 3), so this avoids double-counting it.
+        I_ph_signal = I_ph
+        # Ambient light is extra DC optical power on the same cell. It couples two
+        # ways, both via a total-light solve:
+        #   (1) Harvest — extra DC power lifts V_cell/harvested power.
+        #   (2) Data — the cell is nonlinear, so the ambient-raised bias lowers the
+        #       diode's dynamic resistance and *compresses* the LED-driven AC swing.
+        #       The demod signal is therefore the incremental load current the LED
+        #       adds on top of the ambient-only operating point (total-light solve
+        #       minus an ambient-only DC solve), evaluated at the shifted bias.
+        # Shot noise stays on the LED-only current I_ph, so ambient's shot impact
+        # enters exactly once via NoiseModel source 3 (no double-count).
         # Conversion matches noise.py: 1 lux ≈ 1.46 µW/cm² over the cell area.
         amb_lux = getattr(cfg, 'ambient_illuminance_lux', 0.0)
         if amb_lux > 0:
             P_ambient = amb_lux * 1.46e-6 * cfg.sc_area_cm2  # W (DC)
             pv_harvest = pv_model.simulate(t, P_rx + P_ambient, R_load=cfg.r_sense_ohm)
+            pv_amb_dc = pv_model.simulate(
+                t, np.full_like(P_rx, P_ambient), R_load=cfg.r_sense_ohm)
+            I_ph_signal = pv_harvest.I_cell - pv_amb_dc.I_cell
         else:
             pv_harvest = pv_result
     else:
         I_ph = rx.optical_to_current(P_rx)
+        I_ph_signal = I_ph
 
     # Capture clean photocurrent before noise
     if probes is not None:
@@ -308,13 +318,15 @@ def run_python_simulation(config, bits_override=None,
         # Sum at the photocurrent domain BEFORE any voltage amplification so
         # the gain stages amplify (signal + noise) together — this is the
         # invariant that lets the demodulator's bit decision actually see noise.
-        I_ph_noisy = I_ph + noise_awgn + noise_flicker + noise_pink
+        # I_ph_signal carries the ambient-shifted (compressed) data swing; the
+        # noise basis above stays on the LED-only I_ph.
+        I_ph_noisy = I_ph_signal + noise_awgn + noise_flicker + noise_pink
 
         if probes is not None:
             probes.capture("rx.noise.mains_flicker", noise_flicker)
             probes.capture("rx.noise.pink", noise_pink)
     else:
-        I_ph_noisy = I_ph
+        I_ph_noisy = I_ph_signal
 
     if probes is not None:
         probes.capture("rx.I_ph_noisy", I_ph_noisy)
