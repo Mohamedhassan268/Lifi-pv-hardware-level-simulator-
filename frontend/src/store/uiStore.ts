@@ -15,7 +15,8 @@ export type Route =
   | "builder"
   | "schematic"
   | "ac"
-  | "inspector";
+  | "inspector"
+  | "greenhouse";
 
 /**
  * The form(s) a project is built/viewed in: a schematic (the circuit editor)

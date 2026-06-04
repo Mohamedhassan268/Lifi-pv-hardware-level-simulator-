@@ -9,9 +9,11 @@ import { useState } from "react";
 
 import { LaunchChoiceModal } from "@/features/landing/LaunchChoiceModal";
 import { DUR, EASE } from "@/lib/motion";
+import { useUIStore } from "@/store/uiStore";
 
 export function LandingRoute() {
   const [choiceOpen, setChoiceOpen] = useState(false);
+  const setRoute = useUIStore((s) => s.setRoute);
 
   return (
     <motion.section
@@ -83,6 +85,14 @@ export function LandingRoute() {
         <p className="mt-3 text-[11px] text-slate-500">
           Choose a preset to start fast, or build a system from scratch.
         </p>
+
+        <button
+          type="button"
+          onClick={() => setRoute("greenhouse")}
+          className="mt-6 text-[12px] text-slate-400 underline-offset-4 hover:text-beam-300 hover:underline"
+        >
+          → Greenhouse coverage canvas
+        </button>
       </motion.div>
 
       <LaunchChoiceModal open={choiceOpen} onClose={() => setChoiceOpen(false)} />

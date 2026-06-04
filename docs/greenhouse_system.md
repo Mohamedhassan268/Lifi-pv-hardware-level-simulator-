@@ -1,9 +1,10 @@
 # Smart-Greenhouse System Architecture & Simulation Roadmap
 
-**Status:** 2026-06-04 — architecture map + **first SLIPT results (§5)**. The
-data↔energy node model (milestone A) and a first cut of greenhouse-condition
-sensitivity (milestone B) are built and run. The multi-node canvas (Path C) and
-the LoRa budget block remain future work.
+**Status:** 2026-06-04 — architecture map + **SLIPT results + Path C M1/M2/M3
+(§5)**. Built and run: the data↔energy node model, greenhouse-condition
+sensitivity, coverage + deployable-region + sizing + multi-luminaire analysis,
+and the end-to-end LiFi-edge + LoRa-backhaul budget. The remaining piece is the
+interactive multi-node **canvas UI** (these scripts are the compute it will call).
 
 ---
 
@@ -156,6 +157,101 @@ Data holds (~1e-2 floor) across 0.2–1.0 m at night, but **harvest collapses
 ~280× from 330 µW (0.2 m) to 1.2 µW (1.0 m)** — the narrow 9° LED beam.
 **Energy autonomy is distance-critical: a node must sit ≲0.3 m to harvest
 usefully**, even where data still closes.
+
+### C/M1 — greenhouse coverage (first cut)
+
+`scripts/coverage_map.py` sweeps the node PHY across a greenhouse floor under one
+ceiling luminaire (node = `slipt_node` receiver at R=500 Ω, the best-data point;
+4×4 m floor, h=2.5 m, 40°/8 W luminaire). Per position: φ=ψ=atan(r/h),
+d=√(h²+r²) — the existing channel geometry, FOV-gated.
+
+```
+python scripts/coverage_map.py --grid 11 --n-bits 1000
+```
+
+Result: the **data link closes across 100% of the floor** (BER ≤ 1e-2
+everywhere), but **PV harvest spans 45 µW (under the luminaire) → 0.4 µW
+(corners)** — a ~100× drop. So coverage here is **energy-limited, not
+data-limited**: every node can talk, but only near-centre nodes can power
+themselves. This is the canvas substrate and it sharpens M2: the deployable
+region is set by a per-node power budget, not link closure. Figure:
+`workspace/slipt/coverage_map.png`.
+
+### C/M2 — deployable region (autonomy budget)
+
+Overlaying a per-node power budget on the same map (`--node-budget-uW`, default
+10 µW MCU+radio+sensor draw, 75% DC-DC) splits the floor into three zones:
+no-link / linked-but-energy-starved / deployable (link closes **and** usable
+harvest ≥ budget).
+
+```
+python scripts/coverage_map.py --grid 11 --node-budget-uW 10
+```
+
+For the 10 µW node: **the link closes on 100% of the floor, but only ~24% is
+self-powerable** — a central disc under the luminaire; the other ~76% can talk
+but needs a battery or wired power. The deployable area is the real design knob —
+it grows with luminaire power, lower node budget, or lower ceiling. (Third panel
+of `coverage_map.png`.)
+
+**Sizing** (`scripts/coverage_sizing.py`) — deployable area vs luminaire power,
+per node budget (7×7 grid, R=500 Ω):
+
+| power | data | 1 µW node | 10 µW node | 50 µW node |
+|---|---|---|---|---|
+| 2 W | 100% | 18% | 0% | 0% |
+| 8 W | 100% | 76% | 18% | 0% |
+| 16 W | 100% | 100% | 51% | 18% |
+| 32 W | 100% | 100% | 92% | 43% |
+
+Data closes everywhere from ≥1 W — **the whole design problem is energy.**
+Power-covering the full floor needs ~16 W optical for a 1 µW node, ~32 W for a
+10 µW node; a 50 µW node never clears ~43% even at 32 W (→ battery, or denser
+luminaires). Single-luminaire power-coverage is expensive.
+
+**Multi-luminaire** (`scripts/coverage_multi.py`) — splitting the *same* 8 W
+total across L luminaires (node takes data from the strongest, all others sum
+into harvest), 4×4 m floor, 10 µW node:
+
+| layout | per-luminaire | deployable | peak harvest |
+|---|---|---|---|
+| L=1 | 8 W | 27% | 45 µW |
+| L=4 | 2 W | 0% | 5.9 µW |
+| L=9 | 0.9 W | 0% | 11.9 µW |
+
+Counter-intuitive but physical: **distributing a fixed power budget _reduces_
+deployable area.** A node is effectively powered by its nearest luminaire (others
+fall off as 1/d²·cosᵐφ), and harvest scales ~linearly with local irradiance, so
+splitting the budget drops every node's peak below the threshold. Spreading light
+improves *illumination uniformity* but not *energy autonomy* — whole-floor
+autonomy needs more **total** optical power (the sizing chart) or a lower node
+budget, not the same light spread thin. (Co-luminaires are modeled as DC light,
+not co-channel data interference — a first-cut simplification.)
+
+### C/M3 — end-to-end budget (LiFi edge + LoRa backhaul)
+
+`scripts/e2e_budget.py` chains the optical edge PHY (our engine, via
+`lifi_compare`) onto a LoRa backhaul **link-budget block**
+(`cosim/lora_budget.py`: Semtech time-on-air / bit-rate / sensitivity) to deliver
+a sensor reading to the dashboard, sweeping the spreading factor:
+
+```
+python scripts/e2e_budget.py --payload-bytes 20 --backhaul-m 300
+```
+
+| SF | airtime | LoRa rate | margin @300 m | e2e latency |
+|---|---|---|---|---|
+| 7 | 57 ms | 5.5 kbps | +32 dB | 57 ms |
+| 9 | 185 ms | 1.8 kbps | +37 dB | 185 ms |
+| 12 | 1319 ms | 293 bps | +44 dB | 1.3 s |
+
+Edge LiFi: 42.9 Mbps, 0.044 ms — negligible. **The backhaul is the entire
+budget:** the optical edge is ~4 orders of magnitude faster and ~3 orders lower
+latency, so end-to-end latency ≈ LoRa airtime and aggregate throughput = LoRa
+rate. The SF knob trades range for ~23× latency / ~19× throughput; with LoRa
+duty-cycle limits this also caps how many node readings/s the whole greenhouse
+can deliver — the true system bottleneck. (SF7/125 kHz/20 B airtime = 56.6 ms
+matches the canonical Semtech value, validating the block.)
 
 ### Caveats / next
 
