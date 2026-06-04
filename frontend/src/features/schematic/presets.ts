@@ -328,14 +328,14 @@ const BREADBOARD_POC: CanvasPreset = {
       node("C1", "C", "C", "C1 couple", "C", "", P.twoTerm, 560, 280),
       node("R4", "R", "R", "R4 bias", "R", "", P.twoTerm, 560, 185, "1Meg"),
       rail("VrefR4", "VREF", 622, 110),
-      // --- TL072 U1a: unity buffer ---
+      // --- TL072 U1a: unity buffer (VCC/VEE rails aligned to the pin x: opX+10) ---
       node("Xu1a", "TL072", "TL072", "TL072 U1a (buffer)", "TL072", "Amplifier", opP, 690, 270),
-      rail("VccA", "VCC", 712, 185),
-      rail("VeeA", "VEE", 712, 370),
+      rail("VccA", "VCC", 700, 185),
+      rail("VeeA", "VEE", 700, 370),
       // --- TL072 U1b: non-inverting G=23 (R5 to VMID, R6 feedback) ---
       node("Xu1b", "TL072", "TL072", "TL072 U1b (G=23)", "TL072", "Amplifier", opP, 890, 270),
-      rail("VccB", "VCC", 912, 185),
-      rail("VeeB", "VEE", 912, 370),
+      rail("VccB", "VCC", 900, 185),
+      rail("VeeB", "VEE", 900, 370),
       node("R6", "R", "R", "R6 fb", "R", "", P.twoTerm, 880, 175, "22k"),
       node("R5", "R", "R", "R5", "R", "", P.twoTerm, 790, 110, "1k"),
       rail("VrefR5", "VREF", 852, 40),

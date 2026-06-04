@@ -11,7 +11,7 @@
  */
 
 import { Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow } from "@xyflow/react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { api, type FirmwareFinding } from "@/api/client";
 import { Button } from "@/primitives/Button";
@@ -45,6 +45,8 @@ export function SchematicWorkspace() {
   const clear = useSchematicStore((s) => s.clear);
   const loadGraph = useSchematicStore((s) => s.loadGraph);
   const toCircuitGraph = useSchematicStore((s) => s.toCircuitGraph);
+  const pendingPin = useSchematicStore((s) => s.pendingPin);
+  const clearPending = useSchematicStore((s) => s.clearPending);
 
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<SimResult | null>(null);
@@ -82,6 +84,16 @@ export function SchematicWorkspace() {
   }, []);
 
   const selected = nodes.find((n) => n.id === selectedNodeId) ?? null;
+
+  // Esc cancels an in-progress Ctrl+click wire.
+  useEffect(() => {
+    if (!pendingPin) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") clearPending();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingPin, clearPending]);
 
   const loadPreset = useCallback(
     async (key: string) => {
@@ -141,7 +153,10 @@ export function SchematicWorkspace() {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeClick={(_, n) => selectNode(n.id)}
-          onPaneClick={() => selectNode(null)}
+          onPaneClick={() => {
+            selectNode(null);
+            clearPending();
+          }}
           connectionMode={ConnectionMode.Loose}
           defaultEdgeOptions={{ type: "smoothstep", style: { stroke: "#94a3b8", strokeWidth: 1.6 } }}
           proOptions={{ hideAttribution: true }}
@@ -165,8 +180,15 @@ export function SchematicWorkspace() {
           <Controls showInteractive={false} />
         </ReactFlow>
         <div className="pointer-events-none absolute left-4 top-3 text-[10px] uppercase tracking-[0.2em] text-slate-500">
-          Drag to place · drag pin-to-pin to wire
+          Drag to place · drag or Ctrl+click pins to wire
         </div>
+        {pendingPin && (
+          <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full
+                          border border-beam-400/50 bg-beam-400/10 px-3 py-1 text-[10px]
+                          uppercase tracking-[0.2em] text-beam-200">
+            Wiring — Ctrl+click the second pin (Esc to cancel)
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-3 overflow-y-auto">

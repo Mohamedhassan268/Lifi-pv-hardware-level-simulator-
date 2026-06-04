@@ -13,7 +13,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 
 import type { SpicePort } from "@/api/client";
 import { Symbol, type SymbolKey } from "@/features/schematic/symbols";
-import type { PartNodeData } from "@/store/schematicStore";
+import { useSchematicStore, type PartNodeData } from "@/store/schematicStore";
 
 const ROLE_COLOR: Record<string, string> = {
   signal_in: "#67e8f9",
@@ -221,11 +221,14 @@ function resolveAnchors(d: PartNodeData): { port: SpicePort; anchor: Anchor }[] 
   return out as { port: SpicePort; anchor: Anchor }[];
 }
 
-export function PartNode({ data, selected }: NodeProps) {
+export function PartNode({ id, data, selected }: NodeProps) {
   const d = data as PartNodeData;
   const size = sizeOf((d.symbol as SymbolKey) ?? "generic");
   const w = SYM_W[size];
   const h = (w * 40) / 64; // preserve the 64×40 glyph aspect
+
+  const clickPin = useSchematicStore((s) => s.clickPin);
+  const pendingPin = useSchematicStore((s) => s.pendingPin);
 
   const anchors = resolveAnchors(d);
   const handleType = (role: string) =>
@@ -242,24 +245,40 @@ export function PartNode({ data, selected }: NodeProps) {
         style={{ width: w, height: h }}
       >
         <Symbol symbol={(d.symbol as SymbolKey) ?? "generic"} />
-        {anchors.map(({ port, anchor }) => (
-          <Handle
-            key={port.name}
-            id={port.name}
-            type={handleType(port.role)}
-            position={anchor.side}
-            style={{
-              left: `${(anchor.x / 64) * 100}%`,
-              top: `${(anchor.y / 40) * 100}%`,
-              transform: "translate(-50%, -50%)",
-              width: 9,
-              height: 9,
-              border: 0,
-              background: ROLE_COLOR[port.role] ?? "#67e8f9",
-            }}
-            isConnectable
-          />
-        ))}
+        {anchors.map(({ port, anchor }) => {
+          const armed = pendingPin?.node === id && pendingPin.handle === port.name;
+          return (
+            <Handle
+              key={port.name}
+              id={port.name}
+              type={handleType(port.role)}
+              position={anchor.side}
+              // Ctrl+click wiring: arm this pin (or wire to the armed one). Run in
+              // the capture phase + stop propagation so React Flow's drag-connect
+              // doesn't also fire.
+              onPointerDownCapture={(e) => {
+                if (e.ctrlKey || e.metaKey) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  clickPin(id, port.name);
+                }
+              }}
+              style={{
+                left: `${(anchor.x / 64) * 100}%`,
+                top: `${(anchor.y / 40) * 100}%`,
+                transform: "translate(-50%, -50%)",
+                width: armed ? 12 : 9,
+                height: armed ? 12 : 9,
+                border: 0,
+                background: ROLE_COLOR[port.role] ?? "#67e8f9",
+                boxShadow: armed ? "0 0 0 3px rgba(34,211,238,0.9)" : undefined,
+                cursor: "crosshair",
+                zIndex: armed ? 10 : undefined,
+              }}
+              isConnectable
+            />
+          );
+        })}
       </div>
 
       <div className="mt-1 text-center">

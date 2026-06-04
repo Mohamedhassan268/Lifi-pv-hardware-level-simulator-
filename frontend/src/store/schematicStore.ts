@@ -65,6 +65,8 @@ interface SchematicState {
   edges: Edge[];
   selectedNodeId: string | null;
   refCounter: number;
+  /** First pin armed by a Ctrl+click, awaiting a second pin to wire to. */
+  pendingPin: { node: string; handle: string } | null;
 
   onNodesChange: (changes: NodeChange[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
@@ -76,6 +78,9 @@ interface SchematicState {
   clear: () => void;
   loadGraph: (nodes: Node<PartNodeData>[], edges: Edge[]) => void;
   toCircuitGraph: (title?: string) => CircuitGraphPayload;
+  /** Ctrl+click wiring: arm the first pin, then wire to the second. */
+  clickPin: (node: string, handle: string) => void;
+  clearPending: () => void;
 }
 
 // Reference designator prefix per component type.
@@ -92,6 +97,7 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
   edges: [],
   selectedNodeId: null,
   refCounter: 0,
+  pendingPin: null,
 
   onNodesChange: (changes) =>
     set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) as Node<PartNodeData>[] })),
@@ -156,6 +162,26 @@ export const useSchematicStore = create<SchematicState>((set, get) => ({
     const { nodes, edges } = get();
     return serializeGraph(nodes, edges, title);
   },
+
+  clickPin: (node, handle) =>
+    set((s) => {
+      const p = s.pendingPin;
+      // First Ctrl+click arms the pin; a second one wires the two together.
+      if (!p) return { pendingPin: { node, handle } };
+      if (p.node === node && p.handle === handle) return { pendingPin: null }; // re-click cancels
+      const newEdge: Edge = {
+        id: `e-${p.node}.${p.handle}-${node}.${handle}`,
+        source: p.node,
+        sourceHandle: p.handle,
+        target: node,
+        targetHandle: handle,
+        type: "smoothstep",
+        style: { stroke: "#94a3b8", strokeWidth: 1.6 },
+      };
+      return { edges: addEdge(newEdge, s.edges), pendingPin: null };
+    }),
+
+  clearPending: () => set({ pendingPin: null }),
 }));
 
 /**
