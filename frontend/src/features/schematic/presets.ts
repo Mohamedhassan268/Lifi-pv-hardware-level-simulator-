@@ -21,6 +21,8 @@ export interface CanvasPreset {
   label: string;
   description: string;
   build: () => Promise<{ nodes: Node<PartNodeData>[]; edges: Edge[] }>;
+  /** When set, loading the preset also selects this Run-settings modulation. */
+  modulation?: string;
 }
 
 async function ports(part: string): Promise<SpicePort[]> {
@@ -281,4 +283,120 @@ const ANALOG_LINK: CanvasPreset = {
   },
 };
 
-export const CANVAS_PRESETS: CanvasPreset[] = [OOK_LINK, ANALOG_LINK, BREADBOARD];
+// Fully-faithful breadboard PoC: the user's exact netlist as a drawn circuit.
+// TX: ESP32 GPIO -> R1 -> 2N2222 low-side switch -> R_LED -> 5mm white LED -> +5V.
+// RX (split +/-5V via the ICL7660 = the VEE rail): small PV panel -> R3 load ->
+// C1 AC-couple -> R4 bias to VMID(=vref) -> TL072 unity buffer -> TL072 G=23
+// (R5 to VMID, R6 feedback) -> C2 -> R9 -> BZX84C3V3 ADC clamp -> ESP32 ADC.
+// PWM-ASK, demodulated by the MCU's firmware (Python DSP). Closes BER 0 through
+// the two-pass SPICE co-sim (run_pwm_ask_link). Note: D2 (Zener) is drawn as a
+// correct clamp (cathode->ADC node) -- the original netlist's anode->ADC would
+// forward-conduct at the 1.65V ADC bias; VMID is modelled as the stiff vref
+// rail (a hardware build wants a VMID bypass cap to actually reach G=23).
+const BREADBOARD_POC: CanvasPreset = {
+  key: "breadboard_poc_faithful",
+  label: "Breadboard PoC (faithful, PWM-ASK)",
+  description:
+    "Exact netlist: ESP32+2N2222+5mm LED TX, small PV + TL072 x2 (+/-5V) RX, ESP32 ADC. PWM-ASK.",
+  modulation: "PWM_ASK",
+  build: async () => {
+    const [ledP, bjtP, pvP, opP, znP] = await Promise.all([
+      ports("LED5MM_WHITE"),
+      ports("BJT_2N2222"),
+      ports("PV_PANEL_5V1W"),
+      ports("TL072"),
+      ports("BZX84C3V3"),
+    ]);
+
+    const nodes: Node<PartNodeData>[] = [
+      // --- TX lane ---
+      node("Vdrv", "DRIVE", "DRIVE", "ESP32 GPIO25", "PWM_ASK", "", P.drive, 20, 200),
+      node("R1", "R", "R", "R1", "R", "", P.twoTerm, 180, 200, "1k"),
+      node("Xq1", "BJT_2N2222", "BJT_2N2222", "2N2222", "BJT_2N2222", "BJT", bjtP, 320, 220),
+      node("Rled", "R", "R", "R_LED", "R", "", P.twoTerm, 320, 90, "220"),
+      node("Xled", "LED5MM_WHITE", "LED5MM_WHITE", "5mm white LED", "LED5MM_WHITE", "LED", ledP, 320, 10),
+      rail("VccLED", "VCC", 320, -70),
+      rail("GndE", "GND", 360, 330),
+      // --- channel marker ---
+      node("Ch1", "CHANNEL", "CHANNEL", "Optical link", "optical", "", P.channel, 470, 130),
+      // --- RX front end ---
+      node("Xpv", "PV_PANEL_5V1W", "PV_PANEL_5V1W", "PV panel", "PV_PANEL_5V1W", "Solar Cell", pvP, 600, 150),
+      node("R3", "R", "R", "R3 load", "R", "", P.twoTerm, 760, 240, "1k"),
+      rail("GndPV", "GND", 770, 330),
+      node("C1", "C", "C", "C1 couple", "C", "", P.twoTerm, 760, 120, "100n"),
+      node("R4", "R", "R", "R4 bias", "R", "", P.twoTerm, 760, 40, "1Meg"),
+      rail("VrefR4", "VREF", 760, -40),
+      // --- TL072 stage 1: unity buffer ---
+      node("Xu1a", "TL072", "TL072", "TL072 U1a (buffer)", "TL072", "Amplifier", opP, 900, 110),
+      rail("VccA", "VCC", 900, 20),
+      rail("VeeA", "VEE", 900, 250),
+      // --- TL072 stage 2: non-inverting G=23 ---
+      node("Xu1b", "TL072", "TL072", "TL072 U1b (G=23)", "TL072", "Amplifier", opP, 1080, 110),
+      rail("VccB", "VCC", 1080, 20),
+      rail("VeeB", "VEE", 1080, 250),
+      node("R6", "R", "R", "R6 fb", "R", "", P.twoTerm, 1080, -30, "22k"),
+      node("R5", "R", "R", "R5", "R", "", P.twoTerm, 1010, -110, "1k"),
+      rail("VrefR5", "VREF", 1010, -190),
+      // --- output coupling + ADC protection ---
+      node("C2", "C", "C", "C2 couple", "C", "", P.twoTerm, 1240, 110, "1u"),
+      node("Rbias", "R", "R", "R_VMID", "R", "", P.twoTerm, 1240, 30, "100k"),
+      rail("VrefRb", "VREF", 1240, -50),
+      node("R9", "R", "R", "R9", "R", "", P.twoTerm, 1380, 110, "1k"),
+      node("Xd2", "BZX84C3V3", "BZX84C3V3", "BZX84C3V3 clamp", "BZX84C3V3", "Zener", znP, 1380, 220),
+      rail("GndZ", "GND", 1420, 320),
+      node("Mcu", "MCU", "MCU", "ESP32 ADC (GPIO34)", "demod", "", [
+        { name: "adc", role: "signal_in" },
+        { name: "gpio", role: "signal_out" },
+      ], 1520, 110),
+    ];
+
+    const edges: Edge[] = [
+      // --- TX ---
+      wire("Vdrv", "out", "R1", "1"),
+      wire("R1", "2", "Xq1", "base"),
+      wire("Xq1", "collector", "Rled", "2"),
+      wire("Rled", "1", "Xled", "cathode"),
+      wire("Xled", "anode", "VccLED", "v"),
+      wire("Xq1", "emitter", "GndE", "gnd"),
+      // optical link marker -> PV
+      wire("Ch1", "rx", "Xpv", "photo_in"),
+      // --- RX front end: PV(+)=anode -> R3 load + C1 couple; cathode to GND ---
+      wire("Xpv", "anode", "R3", "1"),
+      wire("Xpv", "anode", "C1", "1"),
+      wire("Xpv", "cathode", "GndPV", "gnd"),
+      wire("R3", "2", "GndPV", "gnd"),
+      wire("C1", "2", "R4", "1"),
+      wire("C1", "2", "Xu1a", "INP"),
+      wire("R4", "2", "VrefR4", "v"),
+      // --- stage 1 unity buffer (INN tied to OUT) ---
+      wire("Xu1a", "OUT", "Xu1a", "INN"),
+      wire("Xu1a", "OUT", "Xu1b", "INP"),
+      wire("Xu1a", "VCC", "VccA", "v"),
+      wire("Xu1a", "VEE", "VeeA", "v"),
+      // --- stage 2 non-inverting G=23 (R5 to VMID, R6 feedback) ---
+      wire("Xu1b", "INN", "R5", "1"),
+      wire("Xu1b", "INN", "R6", "1"),
+      wire("R5", "2", "VrefR5", "v"),
+      wire("Xu1b", "OUT", "R6", "2"),
+      wire("Xu1b", "OUT", "C2", "1"),
+      wire("Xu1b", "VCC", "VccB", "v"),
+      wire("Xu1b", "VEE", "VeeB", "v"),
+      // --- output coupling + VMID re-bias + ADC protection ---
+      wire("C2", "2", "Rbias", "1"),
+      wire("C2", "2", "R9", "1"),
+      wire("Rbias", "2", "VrefRb", "v"),
+      wire("R9", "2", "Xd2", "cathode"),   // flipped clamp: cathode -> ADC node
+      wire("R9", "2", "Mcu", "adc"),
+      wire("Xd2", "anode", "GndZ", "gnd"),
+    ];
+
+    return { nodes, edges };
+  },
+};
+
+export const CANVAS_PRESETS: CanvasPreset[] = [
+  OOK_LINK,
+  ANALOG_LINK,
+  BREADBOARD,
+  BREADBOARD_POC,
+];

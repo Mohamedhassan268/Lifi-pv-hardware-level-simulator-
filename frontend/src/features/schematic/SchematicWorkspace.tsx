@@ -69,6 +69,7 @@ export function SchematicWorkspace() {
       try {
         const { nodes: ns, edges: es } = await preset.build();
         loadGraph(ns, es);
+        if (preset.modulation) setModulation(preset.modulation);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -223,6 +224,7 @@ export function SchematicWorkspace() {
               <option value="OOK_Manchester">Manchester (OOK)</option>
               <option value="BFSK">BFSK</option>
               <option value="OFDM">OFDM</option>
+              <option value="PWM_ASK">PWM-ASK</option>
             </select>
           </label>
           <div className="grid grid-cols-3 gap-2">

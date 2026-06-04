@@ -19,6 +19,7 @@ export type SymbolKey =
   | "drive"
   | "channel"
   | "diode"
+  | "transistor"
   | "led"
   | "photodiode"
   | "mosfet"
@@ -141,6 +142,19 @@ const SYMBOLS: Record<SymbolKey, ReactNode> = {
       <polygon points="24,12 24,28 38,20" fill="rgba(203,213,225,0.12)" />
       <line x1="38" y1="12" x2="38" y2="28" />
       <line x1="38" y1="20" x2="60" y2="20" />
+    </g>,
+  ),
+
+  // NPN BJT: base bar, collector/emitter legs, emitter arrow pointing out.
+  transistor: frame(
+    <g fill="none" stroke={STROKE} strokeWidth={1.5}>
+      <line x1="6" y1="20" x2="24" y2="20" />
+      <line x1="24" y1="10" x2="24" y2="30" />
+      <line x1="24" y1="16" x2="44" y2="7" />
+      <line x1="44" y1="7" x2="44" y2="2" />
+      <line x1="24" y1="24" x2="44" y2="33" />
+      <line x1="44" y1="33" x2="44" y2="38" />
+      <polygon points="44,33 38,30 39,34" fill={STROKE} stroke="none" />
     </g>,
   ),
 
@@ -290,6 +304,10 @@ export function symbolFor(category: string, ctype: string): SymbolKey {
       return "amp";
     case "Comparator":
       return "comparator";
+    case "BJT":
+      return "transistor";
+    case "Zener":
+      return "diode";
     case "Photodiode":
       return "photodiode";
     case "Solar Cell":
