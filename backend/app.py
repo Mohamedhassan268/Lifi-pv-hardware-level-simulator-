@@ -24,8 +24,10 @@ if str(_ROOT) not in sys.path:
 from backend.routers import ac_ws as ac_ws_router
 from backend.routers import components as components_router
 from backend.routers import config as config_router
+from backend.routers import coverage as coverage_router
 from backend.routers import equations as equations_router
 from backend.routers import features as features_router
+from backend.routers import firmware as firmware_router
 from backend.routers import kicad as kicad_router
 from backend.routers import link_budget as link_budget_router
 from backend.routers import schematic as schematic_router
@@ -61,12 +63,14 @@ def create_app() -> FastAPI:
     app.include_router(config_router.router, prefix="/api/config", tags=["config"])
     app.include_router(components_router.router, prefix="/api/components", tags=["components"])
     app.include_router(link_budget_router.router, prefix="/api/link-budget", tags=["link-budget"])
+    app.include_router(coverage_router.router, prefix="/api/coverage", tags=["coverage"])
     app.include_router(standards_router.router, prefix="/api/standards", tags=["standards"])
     app.include_router(kicad_router.router, prefix="/api/kicad", tags=["kicad"])
     app.include_router(schematic_router.router, prefix="/api/schematic", tags=["schematic"])
     app.include_router(schematic_sim_router.router, prefix="/api/schematic-sim", tags=["schematic-sim"])
     app.include_router(equations_router.router, prefix="/api", tags=["equations"])
     app.include_router(features_router.router, prefix="/api/features", tags=["features"])
+    app.include_router(firmware_router.router, prefix="/api/firmware", tags=["firmware"])
     app.include_router(pipeline_ws_router.router, tags=["pipeline"])
     app.include_router(sweep_ws_router.router, tags=["sweep"])
     app.include_router(ac_ws_router.router, tags=["ac"])
