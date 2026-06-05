@@ -40,6 +40,21 @@ class TestComponents:
         comp = get_component('LXM5-PD01')
         assert isinstance(comp, LXM5_PD01)
 
+    def test_emerging_pv_cells(self):
+        """Perovskite + organic PV: registered, sane device params, valid SPICE."""
+        from components import get_component, PEROVSKITE_MINIMODULE, OPV_NFA
+        for key, cls in (('PEROVSKITE_MINIMODULE', PEROVSKITE_MINIMODULE),
+                         ('OPV_NFA', OPV_NFA)):
+            comp = get_component(key)
+            assert isinstance(comp, cls)
+            p = comp.get_parameters()
+            assert p['responsivity'] > 0
+            assert p['capacitance'] > 0
+            assert p['open_circuit_voltage'] > 0
+            assert p['max_power'] > 0
+            nm = comp.name.upper().replace('-', '_')
+            assert f'.SUBCKT {nm}' in comp.spice_subcircuit()
+
     def test_registry_has_at_least_10_entries(self):
         from components import COMPONENT_REGISTRY
         assert len(COMPONENT_REGISTRY) >= 10

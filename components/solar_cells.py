@@ -8,6 +8,8 @@ Provides models for photovoltaic cells used as LiFi receivers:
     - SLMD121H04L: IXYS silicon cell
     - GenericSiliconPV: Parametric silicon model
     - GenericGaAsPV: Parametric GaAs model
+    - PEROVSKITE_MINIMODULE: Triple-cation perovskite cell (emerging PV)
+    - OPV_NFA: Non-fullerene-acceptor organic cell (emerging PV)
 
 Key Parameters Derived from Physics:
     - Responsivity: From QE × λ / 1240
@@ -598,6 +600,200 @@ class GenericGaAsPV(PhotodetectorBase):
     
     def __repr__(self):
         return f"GenericGaAsPV({self._area_cm2:.1f}cm², C={self.capacitance*1e12:.0f}pF)"
+
+
+# =============================================================================
+# PEROVSKITE_MINIMODULE - PEROVSKITE SOLAR CELL (emerging PV)
+# =============================================================================
+
+class PEROVSKITE_MINIMODULE(PhotodetectorBase):
+    """
+    Triple-cation perovskite solar cell, indoor/LiFi-oriented (~1 cm²).
+
+    Emerging-PV receiver: very low Voc deficit (high Voc for its bandgap) and
+    strong visible EQE make it attractive for indoor harvesting, but ionic
+    transport makes it electrically *slow* — the high-frequency (geometric)
+    capacitance limits LiFi bandwidth, and a much larger apparent capacitance
+    appears at low frequency (ionic, not modelled here).
+
+    Parameters are literature-typical for a state-of-the-art device (not a
+    single datasheet part), so they are approximate by design — per the
+    reviewer note requesting emerging-PV coverage "even with approximate
+    material parameters."
+
+    References:
+        - Green et al., "Solar cell efficiency tables", Prog. Photovolt.
+        - Perovskite indoor-PV literature (e.g. Castro-Hermosa 2019, Cheng 2021)
+    """
+
+    datasheet_url = "https://www.nrel.gov/pv/cell-efficiency.html"
+
+    def __init__(self, temperature_K: float = 300.0, reverse_bias_V: float = 0.0):
+        super().__init__(temperature_K, reverse_bias_V)
+        self._area_cm2 = 1.0
+        self._bandgap_eV = 1.60          # triple-cation perovskite
+        self._voc = 1.10                 # V — low Voc deficit (~0.4 V)
+        self._isc = 23e-3                # A (Jsc ~23 mA/cm² @ 1 sun)
+        self._fill_factor = 0.80         # -> Pmax ~20 mW/cm², PCE ~20%
+        self._responsivity = 0.36        # A/W @ 530 nm (EQE ~0.85 -> 0.85*530/1240)
+        self._capacitance_nF = 20.0      # geometric, high-frequency (ionic C >> at low f)
+        self._shunt_resistance = 10e3    # Ω
+        self._series_resistance = 5.0    # Ω
+        self._dark_current_nA = 1.0      # low J0 (small Voc deficit)
+
+    @property
+    def name(self) -> str:
+        return "PEROVSKITE-MINIMODULE"
+
+    @property
+    def active_area_m2(self) -> float:
+        return self._area_cm2 * 1e-4
+
+    @property
+    def responsivity(self) -> float:
+        return self._responsivity
+
+    @property
+    def capacitance(self) -> float:
+        return self._capacitance_nF * 1e-9
+
+    @property
+    def dark_current(self) -> float:
+        return self._dark_current_nA * 1e-9
+
+    @property
+    def shunt_resistance(self) -> float:
+        return self._shunt_resistance
+
+    @property
+    def series_resistance(self) -> float:
+        return self._series_resistance
+
+    def get_parameters(self) -> Dict[str, Any]:
+        return {
+            'name': self.name,
+            'type': 'solar_cell',
+            'material': 'Perovskite (triple-cation)',
+            'bandgap_eV': self._bandgap_eV,
+            'active_area_m2': self.active_area_m2,
+            'active_area_cm2': self._area_cm2,
+            'responsivity': self.responsivity,
+            'responsivity_peak_nm': 530,
+            'capacitance': self.capacitance,
+            'dark_current': self.dark_current,
+            'shunt_resistance': self.shunt_resistance,
+            'series_resistance': self.series_resistance,
+            'open_circuit_voltage': self._voc,
+            'short_circuit_current': self._isc,
+            'fill_factor': self._fill_factor,
+            'max_power': self._voc * self._isc * self._fill_factor,
+            'bandwidth_220ohm': self.bandwidth(220),
+            'bandwidth_1kohm': self.bandwidth(1000),
+            'temperature_K': self.temperature_K,
+            'note': 'Approximate literature-typical params; ionic low-freq '
+                    'capacitance not modelled.',
+        }
+
+    def __repr__(self):
+        return (f"PEROVSKITE_MINIMODULE(R={self.responsivity:.2f}A/W, "
+                f"C={self.capacitance*1e9:.0f}nF, Voc={self._voc:.2f}V, "
+                f"BW@1kΩ={self.bandwidth(1000)/1e3:.1f}kHz)")
+
+
+# =============================================================================
+# OPV_NFA - ORGANIC SOLAR CELL (non-fullerene acceptor, emerging PV)
+# =============================================================================
+
+class OPV_NFA(PhotodetectorBase):
+    """
+    Non-fullerene-acceptor organic solar cell, PM6:Y6 class (~1 cm²).
+
+    Emerging-PV receiver: a low-bandgap NFA blend with broad absorption out to
+    ~900 nm (so it also responds to red/NIR LEDs), but low carrier mobility
+    gives higher series resistance and a larger Voc deficit than perovskite or
+    III-V cells. Flexible and low-cost, which suits distributed greenhouse nodes.
+
+    Parameters are literature-typical for a state-of-the-art device (not a
+    single datasheet part) and approximate by design.
+
+    References:
+        - Yuan et al., "Single-junction organic solar cell with >15%
+          efficiency" (Y6), Joule 2019.
+        - Green et al., "Solar cell efficiency tables", Prog. Photovolt.
+    """
+
+    datasheet_url = "https://www.nrel.gov/pv/cell-efficiency.html"
+
+    def __init__(self, temperature_K: float = 300.0, reverse_bias_V: float = 0.0):
+        super().__init__(temperature_K, reverse_bias_V)
+        self._area_cm2 = 1.0
+        self._bandgap_eV = 1.35          # low-gap NFA (Y6), absorbs to ~900 nm
+        self._voc = 0.85                 # V — larger Voc deficit (~0.5 V)
+        self._isc = 26e-3                # A (Jsc ~26 mA/cm² @ 1 sun)
+        self._fill_factor = 0.75         # -> Pmax ~16.6 mW/cm², PCE ~16.6%
+        self._responsivity = 0.34        # A/W @ 530 nm (EQE ~0.80); broad incl. NIR
+        self._capacitance_nF = 40.0      # thin active layer -> higher geometric C
+        self._shunt_resistance = 2e3     # Ω
+        self._series_resistance = 8.0    # Ω (low mobility -> higher Rs)
+        self._dark_current_nA = 10.0     # higher J0 (larger Voc deficit)
+
+    @property
+    def name(self) -> str:
+        return "OPV-NFA"
+
+    @property
+    def active_area_m2(self) -> float:
+        return self._area_cm2 * 1e-4
+
+    @property
+    def responsivity(self) -> float:
+        return self._responsivity
+
+    @property
+    def capacitance(self) -> float:
+        return self._capacitance_nF * 1e-9
+
+    @property
+    def dark_current(self) -> float:
+        return self._dark_current_nA * 1e-9
+
+    @property
+    def shunt_resistance(self) -> float:
+        return self._shunt_resistance
+
+    @property
+    def series_resistance(self) -> float:
+        return self._series_resistance
+
+    def get_parameters(self) -> Dict[str, Any]:
+        return {
+            'name': self.name,
+            'type': 'solar_cell',
+            'material': 'Organic (PM6:Y6 NFA)',
+            'bandgap_eV': self._bandgap_eV,
+            'active_area_m2': self.active_area_m2,
+            'active_area_cm2': self._area_cm2,
+            'responsivity': self.responsivity,
+            'responsivity_peak_nm': 530,
+            'capacitance': self.capacitance,
+            'dark_current': self.dark_current,
+            'shunt_resistance': self.shunt_resistance,
+            'series_resistance': self.series_resistance,
+            'open_circuit_voltage': self._voc,
+            'short_circuit_current': self._isc,
+            'fill_factor': self._fill_factor,
+            'max_power': self._voc * self._isc * self._fill_factor,
+            'bandwidth_220ohm': self.bandwidth(220),
+            'bandwidth_1kohm': self.bandwidth(1000),
+            'temperature_K': self.temperature_K,
+            'note': 'Approximate literature-typical params; broad NIR response '
+                    'not wavelength-resolved here.',
+        }
+
+    def __repr__(self):
+        return (f"OPV_NFA(R={self.responsivity:.2f}A/W, "
+                f"C={self.capacitance*1e9:.0f}nF, Voc={self._voc:.2f}V, "
+                f"BW@1kΩ={self.bandwidth(1000)/1e3:.1f}kHz)")
 
 
 # =============================================================================

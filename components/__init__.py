@@ -56,6 +56,8 @@ from .solar_cells import (
     SM141K,
     GenericGaAsPV,
     PV_PANEL_5V1W,
+    PEROVSKITE_MINIMODULE,
+    OPV_NFA,
 )
 
 # Photodiodes
@@ -123,6 +125,8 @@ __all__ = [
     'SM141K',
     'GenericGaAsPV',
     'PV_PANEL_5V1W',
+    'PEROVSKITE_MINIMODULE',
+    'OPV_NFA',
 
     # Photodiodes
     'BPW34',
@@ -170,6 +174,8 @@ COMPONENT_REGISTRY = {
     'KXOB25_04X3F': KXOB25_04X3F,
     'SM141K': SM141K,
     'PV_PANEL_5V1W': PV_PANEL_5V1W,
+    'PEROVSKITE_MINIMODULE': PEROVSKITE_MINIMODULE,
+    'OPV_NFA': OPV_NFA,
 
     # Photodiodes
     'BPW34': BPW34,
