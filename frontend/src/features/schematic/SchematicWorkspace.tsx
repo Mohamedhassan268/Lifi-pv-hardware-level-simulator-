@@ -88,6 +88,38 @@ export function SchematicWorkspace() {
     }
   }, []);
 
+  // Generate a starter .ino for this ESP from the current PHY and download it.
+  const generateFw = useCallback(
+    async (role: "tx" | "rx") => {
+      setError(null);
+      const presetFor: Record<string, string> = {
+        PWM_ASK: "lifi_poc_breadboard",
+        BFSK: "xu2024",
+      };
+      const preset = presetFor[modulation];
+      if (!preset) {
+        setError(`Firmware generation supports PWM-ASK and BFSK, not ${modulation}.`);
+        return;
+      }
+      try {
+        const g = await api.generateFirmware(preset, {
+          modulation,
+          data_rate_bps: parseFloat(dataRateKbps) * 1000,
+          ...firmwareParams,
+        });
+        const url = URL.createObjectURL(new Blob([g[role]], { type: "text/plain" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `lifi_${role}_${g.scheme.toLowerCase()}.ino`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [modulation, dataRateKbps, firmwareParams],
+  );
+
   const selected = nodes.find((n) => n.id === selectedNodeId) ?? null;
 
   // Esc cancels an in-progress Ctrl+click wire.
@@ -240,6 +272,13 @@ export function SchematicWorkspace() {
                     info={firmwareInfo[selected.data.ctype === "DRIVE" ? "tx" : "rx"]}
                     onFile={(f) => onFirmware(selected.data.ctype === "DRIVE" ? "tx" : "rx", f)}
                   />
+                  <Button
+                    variant="ghost"
+                    className="mt-1 w-full text-[11px]"
+                    onClick={() => generateFw(selected.data.ctype === "DRIVE" ? "tx" : "rx")}
+                  >
+                    {`⬇ Generate ${selected.data.ctype === "DRIVE" ? "TX" : "RX"} .ino`}
+                  </Button>
                 </div>
               )}
               <Button variant="ghost" onClick={removeSelected}>

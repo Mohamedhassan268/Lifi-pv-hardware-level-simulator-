@@ -237,7 +237,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify(req),
     }),
+  generateFirmware: (preset: string, overrides?: Record<string, number | string>) =>
+    request<FirmwareGenResponse>("/api/firmware/generate", {
+      method: "POST",
+      body: JSON.stringify({ preset, overrides }),
+    }),
 };
+
+export interface FirmwareGenResponse {
+  scheme: string;
+  tx: string;
+  rx: string;
+  notes: string[];
+}
 
 export interface MeasuredCompareRequest {
   csv: string;
