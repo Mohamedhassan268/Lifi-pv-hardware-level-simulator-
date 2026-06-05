@@ -99,8 +99,13 @@ def run_tx_graph(
     vcc_volts: float,
     t_stop_s: float,
     t_step_s: Optional[float] = None,
-) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    """Simulate a drawn TX chain and return ``(t, i_led)``, or None on failure.
+    probe_nets: Optional[list] = None,
+) -> Optional[Tuple[np.ndarray, np.ndarray, dict]]:
+    """Simulate a drawn TX chain and return ``(t, i_led, extras)``, or None.
+
+    ``extras`` maps each requested ``probe_nets`` name to its TX-side node-voltage
+    waveform (so instrument probes can read the drive/gate/LED nets), and is
+    empty when no probes are requested.
 
     Args:
         subckt_defs: concatenated .SUBCKT bodies for placed library parts.
@@ -144,4 +149,11 @@ def run_tx_graph(
     except (KeyError, IndexError):
         logger.warning("I(LED) not found in TX result")
         return None
-    return t, i_led
+
+    extras: dict = {}
+    for net in (probe_nets or []):
+        try:
+            extras[net] = np.array(analysis[net])
+        except (KeyError, IndexError):
+            logger.info("TX probe net %r not found in result", net)
+    return t, i_led, extras

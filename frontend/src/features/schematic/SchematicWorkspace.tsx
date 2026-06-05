@@ -537,7 +537,7 @@ function ProbeReadouts({ probes }: { probes: ProbeResult[] }) {
           return (
             <div key={p.id} className="flex justify-between">
               <span className="text-slate-400">{head}</span>
-              <span className="font-mono text-slate-600">not in RX circuit</span>
+              <span className="font-mono text-slate-600">not in circuit</span>
             </div>
           );
         }

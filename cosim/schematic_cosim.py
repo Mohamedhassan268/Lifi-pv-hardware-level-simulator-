@@ -81,32 +81,32 @@ def _sample_centers(t: np.ndarray, sig: np.ndarray, n: int,
     return sig[idx]
 
 
-def _pack_probes(user_nets, extras: dict, t, n: int = 400) -> Optional[dict]:
-    """Bundle user-placed instrument probes (multimeter / scope) for transport.
+def _pack_probes(user_nets, extras: dict, t, n: int = 400) -> dict:
+    """Bundle the solved net waveforms for user instrument probes.
 
-    ``user_nets`` are the (lowercased) net names each probe touches. For every
-    net found in the solved circuit's ``extras`` we return its DC level (mean),
-    min/max, and a downsampled trace; ``time`` is the shared (downsampled) axis.
-    Returns None when there are no probes.
+    Returns ``{net_lc: {dc, min, max, trace, t}}`` for every requested net found
+    in ``extras``. The time axis is embedded per-net (not shared) so probes from
+    the separate TX and RX SPICE passes — which have different time bases — can
+    be merged into one result.
     """
     nets = [str(x).lower() for x in (user_nets or [])]
-    if not nets:
-        return None
     t = np.asarray(t, dtype=float)
-    if t.size == 0:
-        return {"time": [], "nets": {}}
+    if not nets or t.size == 0:
+        return {}
     idx = np.linspace(0, t.size - 1, min(n, t.size)).astype(int)
-    out = {"time": t[idx].round(6).tolist(), "nets": {}}
+    tds = t[idx].round(6).tolist()
+    out: dict = {}
     for net in nets:
         w = extras.get(net)
         if w is None:
             continue
         w = np.asarray(w, dtype=float)
-        out["nets"][net] = {
+        out[net] = {
             "dc": float(np.mean(w)),
             "min": float(np.min(w)),
             "max": float(np.max(w)),
             "trace": w[idx].round(5).tolist(),
+            "t": tds,
         }
     return out
 
@@ -159,17 +159,18 @@ def run_two_pass(graph: dict, cfg, user_probe_nets=None) -> Optional[dict]:
     drive_t, drive_v = tx_runner.ook_gate_drive(line_syms, symbol_period, v_on=cfg.vcc_volts)
 
     # --- pass 1: TX analog -> I(LED) ---
+    uprobe = [str(n).lower() for n in (user_probe_nets or []) if n]
     tx_sub = subgraph(graph, part.tx_refs)
     tx_res = tx_runner.run_tx_graph(
         _collect_defs(tx_sub["components"]),
         graph_dict_to_instances(tx_sub),
         drive_net=part.drive_net.lower(), drive_t=drive_t, drive_v=drive_v,
         led_ref=part.led_ref, vcc_volts=cfg.vcc_volts,
-        t_stop_s=t_stop, t_step_s=t_step,
+        t_stop_s=t_stop, t_step_s=t_step, probe_nets=uprobe,
     )
     if tx_res is None:
         return {"ber": None, "message": "TX pass failed (no I(LED))."}
-    t_tx, i_led = tx_res
+    t_tx, i_led, tx_extras = tx_res
 
     # --- comms layer: I(LED) -> optical -> channel -> P_rx ---
     p_rx = led_current_to_p_rx(led, i_led, cfg)
@@ -242,7 +243,8 @@ def run_two_pass(graph: dict, cfg, user_probe_nets=None) -> Optional[dict]:
             "transimpedance_V_per_A": z_trans,
             "noise_sigma_mV": sigma_v * 1e3,
         },
-        "probes": _pack_probes(user_probe_nets, extras, t_rx),
+        "probes": {"nets": {**_pack_probes(uprobe, tx_extras, t_tx),
+                            **_pack_probes(uprobe, extras, t_rx)}},
     }
 
 
@@ -328,17 +330,18 @@ def run_pwm_ask_link(graph: dict, cfg, user_probe_nets=None) -> Optional[dict]:
 
     # --- pass 1: TX analog (GPIO -> R1 -> 2N2222 -> LED) -> I(LED) ---
     # TX rail is +5 V (the LED anode rail), not the 3.3 V GPIO level.
+    uprobe = [str(n).lower() for n in (user_probe_nets or []) if n]
     tx_sub = subgraph(graph, part.tx_refs)
     tx_res = tx_runner.run_tx_graph(
         _collect_defs(tx_sub["components"]),
         graph_dict_to_instances(tx_sub),
         drive_net=part.drive_net.lower(), drive_t=drive_t, drive_v=drive_v,
         led_ref=part.led_ref, vcc_volts=5.0,
-        t_stop_s=t_stop, t_step_s=t_step,
+        t_stop_s=t_stop, t_step_s=t_step, probe_nets=uprobe,
     )
     if tx_res is None:
         return {"ber": None, "message": "TX pass failed (no I(LED))."}
-    t_tx, i_led = tx_res
+    t_tx, i_led, tx_extras = tx_res
 
     # --- comms layer: I(LED) -> optical -> channel -> P_rx ---
     p_rx = led_current_to_p_rx(led, i_led, cfg)
@@ -395,7 +398,8 @@ def run_pwm_ask_link(graph: dict, cfg, user_probe_nets=None) -> Optional[dict]:
             "transimpedance_V_per_A": z_trans,
             "noise_sigma_mV": sigma_v * 1e3,
         },
-        "probes": _pack_probes(user_probe_nets, extras, t_rx),
+        "probes": {"nets": {**_pack_probes(uprobe, tx_extras, t_tx),
+                            **_pack_probes(uprobe, extras, t_rx)}},
     }
 
 

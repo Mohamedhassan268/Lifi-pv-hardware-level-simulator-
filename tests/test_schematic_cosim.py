@@ -135,16 +135,18 @@ def test_reference_link_closes():
 
 @spice_unavailable
 def test_user_probes_report_net_voltages():
-    """Instrument probes report DC + trace for solved RX nets; unknown nets are
-    flagged not-found rather than dropped."""
+    """Instrument probes report DC + trace for solved nets on BOTH passes — the
+    TX side (gate drive) and the RX side (ina_out) — while unknown nets are
+    simply absent. Each net carries its own time axis."""
     res = run_two_pass(ook_link_graph(), _cfg(0.325),
-                       user_probe_nets=["ina_out", "sc_cathode", "nope"])
-    packed = res["probes"]
-    assert set(packed["nets"]) == {"ina_out", "sc_cathode"}  # 'nope' absent
-    assert len(packed["time"]) > 0
-    nd = packed["nets"]["ina_out"]
+                       user_probe_nets=["gate", "ina_out", "sc_cathode", "nope"])
+    nets = res["probes"]["nets"]
+    assert "gate" in nets       # TX-side net resolved (the extension)
+    assert "ina_out" in nets    # RX-side net resolved
+    assert "nope" not in nets
+    nd = nets["ina_out"]
     assert nd["min"] <= nd["dc"] <= nd["max"]
-    assert len(nd["trace"]) == len(packed["time"])
+    assert len(nd["trace"]) == len(nd["t"]) > 0
 
 
 @spice_unavailable

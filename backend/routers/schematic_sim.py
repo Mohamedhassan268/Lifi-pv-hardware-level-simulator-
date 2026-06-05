@@ -96,8 +96,7 @@ def _assemble_probes(req_probes: list[dict], packed: dict | None) -> list[dict]:
     """Map each requested probe to its solved net data (DC for the multimeter,
     DC + trace for the scope). Probes whose net isn't in the result are marked
     not-found rather than dropped, so the UI can flag them."""
-    packed = packed or {"time": [], "nets": {}}
-    nets = packed.get("nets", {})
+    nets = (packed or {}).get("nets", {})
     out: list[dict] = []
     for p in req_probes:
         net = (p.get("net") or "")
@@ -112,7 +111,7 @@ def _assemble_probes(req_probes: list[dict], packed: dict | None) -> list[dict]:
             "min": nd["min"] if nd else None,
             "max": nd["max"] if nd else None,
             "trace": nd["trace"] if (nd and is_scope) else None,
-            "time": packed.get("time") if (nd and is_scope) else None,
+            "time": nd["t"] if (nd and is_scope) else None,
         })
     return out
 
