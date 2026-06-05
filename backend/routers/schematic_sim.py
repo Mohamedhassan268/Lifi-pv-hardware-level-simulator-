@@ -77,6 +77,9 @@ class CircuitGraphIn(BaseModel):
     prbs_order: float | None = None
     mcu_clock_MHz: float | None = None
     adc_vref: float | None = None
+    # User-placed instrument probes (multimeter / scope), each tapping one net.
+    # Excluded from the SPICE netlist by the client; we report each net's voltage.
+    probes: list[dict[str, Any]] = []
 
 
 class SchematicSimResponse(BaseModel):
@@ -86,11 +89,38 @@ class SchematicSimResponse(BaseModel):
     message: str | None = None
     warnings: list[str] = []
     diagnostics: dict[str, Any] | None = None
+    probes: list[dict[str, Any]] = []
+
+
+def _assemble_probes(req_probes: list[dict], packed: dict | None) -> list[dict]:
+    """Map each requested probe to its solved net data (DC for the multimeter,
+    DC + trace for the scope). Probes whose net isn't in the result are marked
+    not-found rather than dropped, so the UI can flag them."""
+    packed = packed or {"time": [], "nets": {}}
+    nets = packed.get("nets", {})
+    out: list[dict] = []
+    for p in req_probes:
+        net = (p.get("net") or "")
+        nd = nets.get(net.lower())
+        is_scope = p.get("kind") == "scope"
+        out.append({
+            "id": p.get("id"),
+            "kind": p.get("kind"),
+            "net": net,
+            "found": nd is not None,
+            "dc": nd["dc"] if nd else None,
+            "min": nd["min"] if nd else None,
+            "max": nd["max"] if nd else None,
+            "trace": nd["trace"] if (nd and is_scope) else None,
+            "time": packed.get("time") if (nd and is_scope) else None,
+        })
+    return out
 
 
 @router.post("", response_model=SchematicSimResponse)
 def simulate(graph: CircuitGraphIn) -> SchematicSimResponse:
     g = graph.model_dump()
+    user_nets = [p.get("net") for p in graph.probes if p.get("net")]
 
     # 1. ERC
     issues = check_graph(g)
@@ -161,7 +191,7 @@ def simulate(graph: CircuitGraphIn) -> SchematicSimResponse:
             _d["mcu_clock_MHz"] = float(max(graph.mcu_clock_MHz, 0.0))
         if graph.adc_vref is not None:
             _d["adc_vref"] = float(min(max(graph.adc_vref, 0.1), 12.0))
-        two = run_pwm_ask_link(g, SystemConfig(**_d))
+        two = run_pwm_ask_link(g, SystemConfig(**_d), user_probe_nets=user_nets)
     else:
         # 2-level line codes (OOK, Manchester) run through the in-circuit
         # comparator path; anything unrecognised falls back to OOK.
@@ -173,7 +203,7 @@ def simulate(graph: CircuitGraphIn) -> SchematicSimResponse:
             _d["distance_m"] = float(min(max(graph.distance_m, 0.01), 50.0))
         if graph.data_rate_bps is not None:
             _d["data_rate_bps"] = float(min(max(graph.data_rate_bps, 100.0), 1e6))
-        two = run_two_pass(g, SystemConfig(**_d))
+        two = run_two_pass(g, SystemConfig(**_d), user_probe_nets=user_nets)
     if two is not None:
         return SchematicSimResponse(
             ber=two.get("ber"),
@@ -182,6 +212,7 @@ def simulate(graph: CircuitGraphIn) -> SchematicSimResponse:
             message=two.get("message"),
             warnings=warnings,
             diagnostics=two.get("diagnostics"),
+            probes=_assemble_probes(graph.probes, two.get("probes")),
         )
 
     # 2. Serialise to SPICE instance lines

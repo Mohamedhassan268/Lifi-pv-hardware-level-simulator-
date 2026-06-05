@@ -81,6 +81,36 @@ def _sample_centers(t: np.ndarray, sig: np.ndarray, n: int,
     return sig[idx]
 
 
+def _pack_probes(user_nets, extras: dict, t, n: int = 400) -> Optional[dict]:
+    """Bundle user-placed instrument probes (multimeter / scope) for transport.
+
+    ``user_nets`` are the (lowercased) net names each probe touches. For every
+    net found in the solved circuit's ``extras`` we return its DC level (mean),
+    min/max, and a downsampled trace; ``time`` is the shared (downsampled) axis.
+    Returns None when there are no probes.
+    """
+    nets = [str(x).lower() for x in (user_nets or [])]
+    if not nets:
+        return None
+    t = np.asarray(t, dtype=float)
+    if t.size == 0:
+        return {"time": [], "nets": {}}
+    idx = np.linspace(0, t.size - 1, min(n, t.size)).astype(int)
+    out = {"time": t[idx].round(6).tolist(), "nets": {}}
+    for net in nets:
+        w = extras.get(net)
+        if w is None:
+            continue
+        w = np.asarray(w, dtype=float)
+        out["nets"][net] = {
+            "dc": float(np.mean(w)),
+            "min": float(np.min(w)),
+            "max": float(np.max(w)),
+            "trace": w[idx].round(5).tolist(),
+        }
+    return out
+
+
 def _is_manchester(cfg) -> bool:
     return cfg.modulation.upper().replace("-", "_") in ("OOK_MANCHESTER", "MANCHESTER")
 
@@ -103,7 +133,7 @@ def _decode_line(symbols: np.ndarray, cfg) -> np.ndarray:
     return np.asarray(symbols, dtype=int)
 
 
-def run_two_pass(graph: dict, cfg) -> Optional[dict]:
+def run_two_pass(graph: dict, cfg, user_probe_nets=None) -> Optional[dict]:
     part = partition_tx_rx(graph)
     if part is None:
         return None
@@ -147,6 +177,7 @@ def run_two_pass(graph: dict, cfg) -> Optional[dict]:
     # --- pass 2: RX analog, comparator demodulates in-circuit ---
     cmp_in, cmp_th = _find_comparator(part, comps, net_of)
     probe = [n.lower() for n in (cmp_in, cmp_th) if n]
+    probe += [str(n).lower() for n in (user_probe_nets or []) if n]
     rx_sub = subgraph(graph, part.rx_refs)
     rx_res = rx_runner.run_graph(
         _collect_defs(rx_sub["components"]),
@@ -211,6 +242,7 @@ def run_two_pass(graph: dict, cfg) -> Optional[dict]:
             "transimpedance_V_per_A": z_trans,
             "noise_sigma_mV": sigma_v * 1e3,
         },
+        "probes": _pack_probes(user_probe_nets, extras, t_rx),
     }
 
 
@@ -269,7 +301,7 @@ def _pwm_ask_gate_drive(bits: np.ndarray, t: np.ndarray, carrier_freq: float,
     return v_on * data_envelope * carrier
 
 
-def run_pwm_ask_link(graph: dict, cfg) -> Optional[dict]:
+def run_pwm_ask_link(graph: dict, cfg, user_probe_nets=None) -> Optional[dict]:
     """Two-pass PWM-ASK co-sim: SPICE TX (BJT->LED) -> Python channel ->
     SPICE RX gain chain (split supply) -> Python envelope demod. Returns None
     when the graph isn't a TX->RX link."""
@@ -322,7 +354,7 @@ def run_pwm_ask_link(graph: dict, cfg) -> Optional[dict]:
         optical_t=t_tx, optical_v=p_rx,
         vcc_volts=5.0, vee_volts=-5.0, vref_volts=1.65,
         t_stop_s=t_stop, t_step_s=t_step,
-        probe_nets=[amp_out.lower()],
+        probe_nets=[amp_out.lower()] + [str(n).lower() for n in (user_probe_nets or []) if n],
     )
     if rx_res is None:
         return {"ber": None, "message": "RX pass produced no output."}
@@ -363,6 +395,7 @@ def run_pwm_ask_link(graph: dict, cfg) -> Optional[dict]:
             "transimpedance_V_per_A": z_trans,
             "noise_sigma_mV": sigma_v * 1e3,
         },
+        "probes": _pack_probes(user_probe_nets, extras, t_rx),
     }
 
 

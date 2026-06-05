@@ -134,6 +134,20 @@ def test_reference_link_closes():
 
 
 @spice_unavailable
+def test_user_probes_report_net_voltages():
+    """Instrument probes report DC + trace for solved RX nets; unknown nets are
+    flagged not-found rather than dropped."""
+    res = run_two_pass(ook_link_graph(), _cfg(0.325),
+                       user_probe_nets=["ina_out", "sc_cathode", "nope"])
+    packed = res["probes"]
+    assert set(packed["nets"]) == {"ina_out", "sc_cathode"}  # 'nope' absent
+    assert len(packed["time"]) > 0
+    nd = packed["nets"]["ina_out"]
+    assert nd["min"] <= nd["dc"] <= nd["max"]
+    assert len(nd["trace"]) == len(packed["time"])
+
+
+@spice_unavailable
 def test_manchester_link_closes():
     """Manchester (Milestone 2): the comparator slices the 2-level line code
     in-circuit; the Python decode (MCU) turns half-bit symbols back into bits.
