@@ -157,7 +157,7 @@ def simulate(graph: CircuitGraphIn) -> SchematicSimResponse:
             _d["n_bits"] = int(min(max(graph.n_bits or 200, 64), 4000))
         if graph.distance_m is not None:
             _d["distance_m"] = float(min(max(graph.distance_m, 0.01), 50.0))
-        two = run_analog_link(g, SystemConfig(**_d))
+        two = run_analog_link(g, SystemConfig(**_d), user_probe_nets=user_nets)
     elif _mod == "PWM_ASK":
         # Breadboard PoC: SPICE TX (2N2222 -> LED) + SPICE RX gain chain on a
         # split +/-5 V supply + Python envelope demod. Operating point comes

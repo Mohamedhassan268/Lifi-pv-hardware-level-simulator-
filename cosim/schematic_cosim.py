@@ -501,13 +501,18 @@ def _dsp_demod(scheme: str, v_rx: np.ndarray, t: np.ndarray, bits_tx: np.ndarray
     return bits_rx, n_skip
 
 
-def run_analog_link(graph: dict, cfg) -> Optional[dict]:
+def run_analog_link(graph: dict, cfg, user_probe_nets=None) -> Optional[dict]:
     """Two-stage co-sim for OFDM / BFSK: Python linear-driver TX + channel ->
-    SPICE RX analog front-end -> Python DSP demod. Returns None if not a link."""
+    SPICE RX analog front-end -> Python DSP demod. Returns None if not a link.
+
+    Instrument probes resolve against RX-side nets only — the OFDM/BFSK TX is an
+    ideal Python linear driver (no SPICE TX pass), so there is no solved TX
+    circuit to probe."""
     import shutil
     import tempfile
     from pathlib import Path
 
+    uprobe = [str(n).lower() for n in (user_probe_nets or []) if n]
     part = partition_tx_rx(graph)
     if part is None or not rx_runner.available():
         return None
@@ -549,7 +554,7 @@ def run_analog_link(graph: dict, cfg) -> Optional[dict]:
             graph_dict_to_instances(rx_sub),
             optical_t=t, optical_v=p_rx,
             vcc_volts=cfg.vcc_volts, t_stop_s=float(t[-1]), t_step_s=float(t[1] - t[0]),
-            probe_nets=[amp_out.lower()],
+            probe_nets=[amp_out.lower()] + uprobe,
         )
     finally:
         shutil.rmtree(session, ignore_errors=True)
@@ -593,4 +598,5 @@ def run_analog_link(graph: dict, cfg) -> Optional[dict]:
             "transimpedance_V_per_A": z_trans,
             "noise_sigma_mV": sigma_v * 1e3,
         },
+        "probes": {"nets": _pack_probes(uprobe, extras, t_rx)},
     }

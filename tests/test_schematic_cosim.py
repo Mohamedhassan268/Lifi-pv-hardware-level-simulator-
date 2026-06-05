@@ -182,6 +182,24 @@ def test_bfsk_analog_link_closes():
 
 
 @spice_unavailable
+def test_analog_path_probes_rx_side():
+    """OFDM/BFSK probes resolve RX-side nets (the amp output). The TX is a Python
+    linear driver, so TX nets have no solved circuit and stay absent."""
+    from cosim.schematic_cosim import run_analog_link
+    d = SystemConfig.from_preset("xu2024").to_dict()
+    d["modulation"] = "BFSK"
+    d["n_bits"] = 160
+    d["dcdc_enable"] = False
+    res = run_analog_link(ook_link_graph(), SystemConfig(**d),
+                          user_probe_nets=["ina_out", "gate"])
+    nets = res["probes"]["nets"]
+    assert "ina_out" in nets    # RX-side amp output resolves
+    assert "gate" not in nets   # TX net: no SPICE TX pass in the analog path
+    nd = nets["ina_out"]
+    assert len(nd["trace"]) == len(nd["t"]) > 0
+
+
+@spice_unavailable
 def test_ofdm_analog_link_closes():
     """OFDM (Milestone 2): closes through a fast-photodiode passive front-end via
     a circuit-measured per-subcarrier equalizer (LS channel estimate from the
