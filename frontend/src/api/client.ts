@@ -303,6 +303,18 @@ export interface FirmwareParseResponse {
   warnings: string[];
 }
 
+export interface ProbeResult {
+  id: string;
+  kind: "dmm" | "scope";
+  net: string;
+  found: boolean;
+  dc: number | null;
+  min: number | null;
+  max: number | null;
+  trace: number[] | null;
+  time: number[] | null;
+}
+
 export interface SchematicSimResponse {
   ber: number | null;
   ber_incircuit?: number | null;
@@ -310,4 +322,5 @@ export interface SchematicSimResponse {
   message?: string;
   warnings?: string[];
   diagnostics?: Record<string, unknown>;
+  probes?: ProbeResult[];
 }

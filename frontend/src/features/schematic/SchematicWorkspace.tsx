@@ -13,9 +13,10 @@
 import { Background, BackgroundVariant, ConnectionMode, Controls, ReactFlow } from "@xyflow/react";
 import { useCallback, useEffect, useState } from "react";
 
-import { api, type FirmwareFinding, type FirmwareInfo } from "@/api/client";
+import { api, type FirmwareFinding, type FirmwareInfo, type ProbeResult } from "@/api/client";
 import { Button } from "@/primitives/Button";
 import { Card } from "@/primitives/Card";
+import { PlotCanvas } from "@/primitives/PlotCanvas";
 import { Palette } from "@/features/schematic/Palette";
 import { PartNode } from "@/features/schematic/PartNode";
 import { CANVAS_PRESETS } from "@/features/schematic/presets";
@@ -30,6 +31,7 @@ interface SimResult {
   message?: string;
   warnings?: string[];
   diagnostics?: Record<string, unknown>;
+  probes?: ProbeResult[];
 }
 
 export function SchematicWorkspace() {
@@ -401,6 +403,9 @@ export function SchematicWorkspace() {
               {result.warnings?.map((w) => (
                 <p key={w} className="text-amber-400">⚠ {w}</p>
               ))}
+              {result.probes && result.probes.length > 0 && (
+                <ProbeReadouts probes={result.probes} />
+              )}
             </div>
           )}
         </Card>
@@ -515,5 +520,73 @@ function DiagRows({ diag }: { diag: Record<string, unknown> }) {
         </div>
       )}
     </>
+  );
+}
+
+// Instrument readouts: multimeter shows the probed net's DC level (+ swing);
+// scope plots its waveform. Nets the RX SPICE pass didn't solve are flagged.
+function ProbeReadouts({ probes }: { probes: ProbeResult[] }) {
+  const fmtV = (v: number) =>
+    Math.abs(v) >= 1 ? `${v.toFixed(3)} V` : `${(v * 1000).toFixed(1)} mV`;
+  return (
+    <div className="mt-2 space-y-2 border-t border-white/5 pt-2">
+      <p className="text-[10px] uppercase tracking-wider text-slate-500">Measurements</p>
+      {probes.map((p) => {
+        const head = `${p.kind === "dmm" ? "Multimeter" : "Scope"} · ${p.net}`;
+        if (!p.found) {
+          return (
+            <div key={p.id} className="flex justify-between">
+              <span className="text-slate-400">{head}</span>
+              <span className="font-mono text-slate-600">not in RX circuit</span>
+            </div>
+          );
+        }
+        if (p.kind === "dmm") {
+          return (
+            <div key={p.id} className="flex justify-between">
+              <span className="text-slate-400">{head}</span>
+              <span className="font-mono text-beam-200">
+                {p.dc != null ? fmtV(p.dc) : "—"}
+                {p.min != null && p.max != null && (
+                  <span className="ml-1 text-[10px] text-slate-500">
+                    {fmtV(p.min)}…{fmtV(p.max)}
+                  </span>
+                )}
+              </span>
+            </div>
+          );
+        }
+        return (
+          <div key={p.id}>
+            <div className="mb-0.5 flex justify-between">
+              <span className="text-slate-400">{head}</span>
+              {p.dc != null && (
+                <span className="font-mono text-slate-500">mean {fmtV(p.dc)}</span>
+              )}
+            </div>
+            {p.trace && p.time && (
+              <PlotCanvas
+                data={[
+                  {
+                    x: p.time,
+                    y: p.trace,
+                    type: "scatter",
+                    mode: "lines",
+                    line: { color: "#7dd3fc", width: 1 },
+                    hoverinfo: "x+y",
+                  },
+                ]}
+                layout={{
+                  xaxis: { title: { text: "t (s)" } },
+                  yaxis: { title: { text: "V" } },
+                  showlegend: false,
+                }}
+                aspect="16/6"
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }

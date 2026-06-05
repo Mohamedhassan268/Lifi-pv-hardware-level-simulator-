@@ -1,23 +1,30 @@
 /**
- * Palette — left rail of placeable parts. Library components (fetched from
- * /api/components) carry their SPICE ports; generic primitives (R, V) and the
- * solar cell are defined locally with fixed ports.
+ * Palette — left rail of placeable parts, grouped into collapsible sections so
+ * the rail isn't a crowded button cloud:
+ *   - Components: passives, system blocks, and the library active parts
+ *     (fetched from /api/components, which carry their SPICE ports).
+ *   - Instruments: probes/meters (measurement-only, no SPICE element).
+ *   - Power: sources, ground, and the supply rails.
  *
  * Clicking a part drops it at a default position on the canvas; the user then
  * drags it. (Click-to-add is simpler and touch-friendly vs HTML5 DnD.)
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { api, type ComponentSummary, type SpicePort } from "@/api/client";
 import { Card } from "@/primitives/Card";
 import { symbolFor } from "@/features/schematic/symbols";
 import { useSchematicStore, type PartNodeData } from "@/store/schematicStore";
 
+type Group = "component" | "instrument" | "power";
+
 // Primitives the editor can place that aren't registry components.
-const BUILTINS: { label: string; data: PartNodeData; }[] = [
+const BUILTINS: { label: string; group: Group; data: PartNodeData }[] = [
+  // ---- Components ----
   {
     label: "Resistor",
+    group: "component",
     data: {
       part: "R", ctype: "R", label: "Resistor", partCode: "R", symbol: "resistor", value: "1k",
       ports: [
@@ -28,6 +35,7 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
   },
   {
     label: "Capacitor",
+    group: "component",
     data: {
       part: "C", ctype: "C", label: "Capacitor", partCode: "C", symbol: "capacitor", value: "1u",
       ports: [
@@ -37,17 +45,8 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
     },
   },
   {
-    label: "DC source",
-    data: {
-      part: "V", ctype: "V", label: "DC source", partCode: "V", symbol: "source", value: "0",
-      ports: [
-        { name: "1", role: "signal" },
-        { name: "2", role: "signal_out" },
-      ],
-    },
-  },
-  {
     label: "Data Source",
+    group: "component",
     data: {
       part: "DRIVE", ctype: "DRIVE", label: "Data Source", partCode: "OOK", symbol: "drive",
       ports: [{ name: "out", role: "signal_out" }],
@@ -55,6 +54,7 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
   },
   {
     label: "Channel",
+    group: "component",
     data: {
       part: "CHANNEL", ctype: "CHANNEL", label: "Channel", partCode: "optical", symbol: "channel",
       ports: [
@@ -65,6 +65,7 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
   },
   {
     label: "MCU (ESP32)",
+    group: "component",
     data: {
       part: "MCU", ctype: "MCU", label: "MCU (ESP32)", partCode: "demod", symbol: "mcu",
       ports: [
@@ -73,15 +74,46 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
       ],
     },
   },
+  // ---- Instruments ----
   {
     label: "Output",
+    group: "instrument",
     data: {
       part: "OUT", ctype: "OUT", label: "Output", partCode: "dout", symbol: "output",
       ports: [{ name: "out", role: "output" }],
     },
   },
   {
+    label: "Multimeter",
+    group: "instrument",
+    data: {
+      part: "DMM", ctype: "PROBE_DMM", label: "Multimeter", partCode: "dmm", symbol: "multimeter",
+      ports: [{ name: "probe", role: "signal_in" }],
+    },
+  },
+  {
+    label: "Scope",
+    group: "instrument",
+    data: {
+      part: "SCOPE", ctype: "PROBE_SCOPE", label: "Scope", partCode: "scope", symbol: "scope",
+      ports: [{ name: "probe", role: "signal_in" }],
+    },
+  },
+  // ---- Power ----
+  {
+    label: "DC source",
+    group: "power",
+    data: {
+      part: "V", ctype: "V", label: "DC source", partCode: "V", symbol: "source", value: "0",
+      ports: [
+        { name: "1", role: "signal" },
+        { name: "2", role: "signal_out" },
+      ],
+    },
+  },
+  {
     label: "Ground",
+    group: "power",
     data: {
       part: "GND", ctype: "GND", label: "Ground", partCode: "0", symbol: "ground",
       ports: [{ name: "gnd", role: "ground" }],
@@ -89,6 +121,7 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
   },
   {
     label: "VCC",
+    group: "power",
     data: {
       part: "VCC", ctype: "VCC", label: "VCC", partCode: "vcc", symbol: "vcc",
       ports: [{ name: "v", role: "supply_pos" }],
@@ -96,6 +129,7 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
   },
   {
     label: "VEE",
+    group: "power",
     data: {
       part: "VEE", ctype: "VEE", label: "VEE", partCode: "vee", symbol: "vee",
       ports: [{ name: "v", role: "supply_neg" }],
@@ -103,6 +137,7 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
   },
   {
     label: "VREF",
+    group: "power",
     data: {
       part: "VREF", ctype: "VREF", label: "VREF", partCode: "vref", symbol: "vref",
       ports: [{ name: "v", role: "ref" }],
@@ -111,6 +146,48 @@ const BUILTINS: { label: string; data: PartNodeData; }[] = [
 ];
 
 let dropIndex = 0;
+
+/** Collapsible labelled section. */
+function Section({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count?: number;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="border-b border-white/5 pb-2 last:border-b-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between py-1.5 text-left"
+      >
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+          {title}
+          {count != null && <span className="ml-1 text-slate-600">({count})</span>}
+        </span>
+        <span className="text-slate-500">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && <div className="pb-1">{children}</div>}
+    </div>
+  );
+}
+
+function PartButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-xs
+                 text-slate-200 hover:bg-white/[0.08]"
+    >
+      {label}
+    </button>
+  );
+}
 
 export function Palette() {
   const [rows, setRows] = useState<ComponentSummary[]>([]);
@@ -135,6 +212,8 @@ export function Palette() {
       ),
     [rows],
   );
+
+  const builtinsBy = (g: Group) => BUILTINS.filter((b) => b.group === g);
 
   const place = (data: PartNodeData) => {
     const x = 120 + (dropIndex % 4) * 60;
@@ -167,35 +246,20 @@ export function Palette() {
 
   return (
     <Card>
-      <header className="mb-3">
-        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300">
-          Parts
-        </h3>
+      <header className="mb-2">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300">Parts</h3>
         <p className="mt-1 text-xs text-slate-500">Click to place on the canvas</p>
       </header>
 
       {error && <p className="mb-2 text-xs text-rose-400">{error}</p>}
 
-      <div className="mb-3">
-        <p className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Primitives</p>
-        <div className="flex flex-wrap gap-1.5">
-          {BUILTINS.map((b) => (
-            <button
-              key={b.label}
-              type="button"
-              onClick={() => place(b.data)}
-              className="rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-xs
-                         text-slate-200 hover:bg-white/[0.08]"
-            >
-              {b.label}
-            </button>
+      <Section title="Components" count={builtinsBy("component").length + wireable.length}>
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {builtinsBy("component").map((b) => (
+            <PartButton key={b.label} label={b.label} onClick={() => place(b.data)} />
           ))}
         </div>
-      </div>
-
-      <div>
-        <p className="mb-1 text-[10px] uppercase tracking-wider text-slate-500">Active parts</p>
-        <ul className="max-h-[20rem] divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/10">
+        <ul className="max-h-[16rem] divide-y divide-white/5 overflow-y-auto rounded-lg border border-white/10">
           {wireable.map((r) => (
             <li key={r.class}>
               <button
@@ -217,7 +281,23 @@ export function Palette() {
             <li className="px-3 py-4 text-center text-xs text-slate-500">Loading…</li>
           )}
         </ul>
-      </div>
+      </Section>
+
+      <Section title="Instruments" count={builtinsBy("instrument").length}>
+        <div className="flex flex-wrap gap-1.5">
+          {builtinsBy("instrument").map((b) => (
+            <PartButton key={b.label} label={b.label} onClick={() => place(b.data)} />
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Power" count={builtinsBy("power").length}>
+        <div className="flex flex-wrap gap-1.5">
+          {builtinsBy("power").map((b) => (
+            <PartButton key={b.label} label={b.label} onClick={() => place(b.data)} />
+          ))}
+        </div>
+      </Section>
     </Card>
   );
 }

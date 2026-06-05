@@ -30,6 +30,8 @@ export type SymbolKey =
   | "vee"
   | "vref"
   | "mcu"
+  | "multimeter"
+  | "scope"
   | "generic";
 
 const STROKE = "#cbd5e1"; // slate-300
@@ -226,6 +228,25 @@ const SYMBOLS: Record<SymbolKey, ReactNode> = {
       <line x1="4" y1="20" x2="22" y2="20" />
       <polygon points="22,12 46,12 54,20 46,28 22,28" fill="rgba(52,211,153,0.10)" stroke="#34d399" />
       <text x="28" y="24" fontSize="8" fill="#34d399" stroke="none">OUT</text>
+    </g>,
+  ),
+
+  // Multimeter probe: lead into a round meter showing 'V' (measurement-only).
+  multimeter: frame(
+    <g fill="none" stroke={STROKE} strokeWidth={1.5}>
+      <line x1="4" y1="20" x2="22" y2="20" />
+      <circle cx="40" cy="20" r="13" fill="rgba(103,232,249,0.08)" stroke={ACCENT} />
+      <text x="35" y="24" fontSize="11" fill={ACCENT} stroke="none">V</text>
+    </g>,
+  ),
+
+  // Scope probe: lead into a screen with a small trace (measurement-only).
+  scope: frame(
+    <g fill="none" stroke={STROKE} strokeWidth={1.5}>
+      <line x1="4" y1="20" x2="18" y2="20" />
+      <rect x="18" y="7" width="42" height="26" rx="2" fill="rgba(103,232,249,0.06)" stroke={ACCENT} />
+      <polyline points="22,20 27,12 31,28 35,12 39,28 43,12 47,28 51,20 58,20"
+                stroke="#34d399" strokeWidth={1.2} fill="none" />
     </g>,
   ),
 

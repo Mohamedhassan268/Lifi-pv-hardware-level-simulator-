@@ -54,11 +54,26 @@ export interface CircuitGraphNet {
   pins: { component_ref: string; pin_number: number }[];
 }
 
+/** A user-placed instrument probe (multimeter / scope) tapping one net. */
+export interface CircuitGraphProbe {
+  id: string;
+  kind: "dmm" | "scope";
+  net: string;
+}
+
 export interface CircuitGraphPayload {
   title: string;
   components: CircuitGraphComponent[];
   nets: CircuitGraphNet[];
+  probes: CircuitGraphProbe[];
 }
+
+// Instrument node ctypes are measurement-only: kept out of the SPICE netlist,
+// reported back as probes instead.
+const PROBE_KIND: Record<string, "dmm" | "scope"> = {
+  PROBE_DMM: "dmm",
+  PROBE_SCOPE: "scope",
+};
 
 interface SchematicState {
   nodes: Node<PartNodeData>[];
@@ -248,9 +263,13 @@ export function serializeGraph(
     return nd?.data.ports.find((p) => p.name === port)?.role;
   };
 
+  const isProbe = (nodeId: string) =>
+    PROBE_KIND[nodes.find((n) => n.id === nodeId)?.data.ctype ?? ""] !== undefined;
+
   const nets: CircuitGraphNet[] = [];
+  const rootName = new Map<string, string>();
   let auto = 0;
-  for (const [, pins] of rootToPins) {
+  for (const [root, pins] of rootToPins) {
     // skip nets with a single unconnected pin? keep them — ERC handles floating.
     let name: string | undefined;
     for (const pin of pins) {
@@ -261,24 +280,42 @@ export function serializeGraph(
       }
     }
     if (!name) name = `net${auto++}`;
+    rootName.set(root, name);
+    // Probe pins are measurement-only — keep them out of the SPICE net so the
+    // backend never references an instrument as a circuit element.
     nets.push({
       name,
-      pins: pins.map((p) => ({ component_ref: p.nodeId, pin_number: p.pinNo })),
+      pins: pins
+        .filter((p) => !isProbe(p.nodeId))
+        .map((p) => ({ component_ref: p.nodeId, pin_number: p.pinNo })),
     });
   }
 
-  const components: CircuitGraphComponent[] = nodes.map((n) => {
-    const pins: Record<number, string> = {};
-    n.data.ports.forEach((p, i) => {
-      pins[i + 1] = p.name;
-    });
-    return {
-      ref: n.id,
-      component_type: n.data.ctype,
-      value: n.data.value ?? "",
-      pins,
-    };
-  });
+  // Each probe reports the net its single pin sits on.
+  const probes: CircuitGraphProbe[] = [];
+  for (const n of nodes) {
+    const kind = PROBE_KIND[n.data.ctype];
+    if (!kind) continue;
+    const port = n.data.ports[0];
+    if (!port) continue;
+    const net = rootName.get(find(portKey(n.id, port.name)));
+    if (net) probes.push({ id: n.id, kind, net });
+  }
 
-  return { title, components, nets };
+  const components: CircuitGraphComponent[] = nodes
+    .filter((n) => !PROBE_KIND[n.data.ctype]) // instruments aren't SPICE elements
+    .map((n) => {
+      const pins: Record<number, string> = {};
+      n.data.ports.forEach((p, i) => {
+        pins[i + 1] = p.name;
+      });
+      return {
+        ref: n.id,
+        component_type: n.data.ctype,
+        value: n.data.value ?? "",
+        pins,
+      };
+    });
+
+  return { title, components, nets, probes };
 }
