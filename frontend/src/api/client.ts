@@ -232,7 +232,44 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ role, source, filename }),
     }),
+  compareMeasured: (req: MeasuredCompareRequest) =>
+    request<MeasuredCompareResponse>("/api/measured/compare", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
 };
+
+export interface MeasuredCompareRequest {
+  csv: string;
+  preset?: string;
+  n_bits?: number;
+  sample_rate_hz?: number;
+  measured_ber?: number;
+}
+export interface MeasuredCompareBer {
+  simulated: number | null;
+  measured: number | null;
+  abs_error?: number;
+  rel_error?: number | null;
+}
+export interface MeasuredCompareResponse {
+  ok: boolean;
+  message: string;
+  series: { t: number[]; measured: number[]; simulated: number[] };
+  metrics: {
+    nrmse: number;
+    correlation: number;
+    agreement_pct: number;
+    lag_frac: number;
+    ber: MeasuredCompareBer;
+  };
+  meta: {
+    preset: string;
+    n_measured: number;
+    sample_rate_hz: number | null;
+    header: Record<string, string>;
+  };
+}
 
 export interface FirmwareFinding {
   config_field: string;

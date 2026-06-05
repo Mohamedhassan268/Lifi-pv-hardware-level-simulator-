@@ -26,6 +26,7 @@ import { EngineRoute } from "@/routes/EngineRoute";
 import { SchematicRoute } from "@/routes/SchematicRoute";
 import { InspectorRoute } from "@/routes/InspectorRoute";
 import { GreenhouseRoute } from "@/routes/GreenhouseRoute";
+import { MeasuredRoute } from "@/routes/MeasuredRoute";
 import { LandingRoute } from "@/routes/LandingRoute";
 import { SetupRoute } from "@/routes/SetupRoute";
 import { SweepsRoute } from "@/routes/SweepsRoute";
@@ -70,6 +71,7 @@ export function App() {
             {route === "ac" && <AcRoute key="ac" />}
             {route === "inspector" && <InspectorRoute key="inspector" />}
             {route === "greenhouse" && <GreenhouseRoute key="greenhouse" />}
+            {route === "measured" && <MeasuredRoute key="measured" />}
           </AnimatePresence>
         </LayoutGroup>
       </main>

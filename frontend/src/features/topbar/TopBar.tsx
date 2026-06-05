@@ -48,8 +48,9 @@ export function TopBar() {
       <span className="flex-1" />
 
       <div className="flex items-center gap-1 px-2 py-1.5">
-        {/* System-level view — always available. */}
+        {/* System-level views — always available. */}
         <RouteTab label="Greenhouse" active={route === "greenhouse"} onClick={() => setRoute("greenhouse")} />
+        <RouteTab label="Measured" active={route === "measured"} onClick={() => setRoute("measured")} />
         {/* Design tabs — scoped to the task this workspace was opened for. */}
         {forms.block && (
           <RouteTab label="Builder" active={route === "builder"} onClick={() => setRoute("builder")} />
