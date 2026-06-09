@@ -17,6 +17,7 @@ from papers import gonzalez_2024
 from papers import sarwar_2017
 from papers import oliveira_2024
 from papers import xu_2024
+from papers import factory_lifi_analysis
 
 
 PAPERS = {
@@ -55,6 +56,12 @@ PAPERS = {
         'reference': 'EWSN 2024',
         'module': xu_2024,
         'run': xu_2024.run_validation,
+    },
+    'lififactory1': {
+        'label': 'Factory Li-Fi IIoT (lififactory1)',
+        'reference': 'Industry 4.0 system study: Li-Fi + 5G URLLC + Wi-Fi 6, CNC factory floor',
+        'module': factory_lifi_analysis,
+        'run': factory_lifi_analysis.run_validation,
     },
 }
 
